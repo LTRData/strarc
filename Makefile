@@ -8,41 +8,40 @@ CPU=i386
 
 WARNING_LEVEL=/nologo /WX /W4 /wd4214 /wd4201 /wd4206
 !IF "$(CPU)" == "i386"
-OPTIMIZATION=/Yc /Ox /GF /GR- /MD
+OPTIMIZATION=/Yc /Ox /GF /GR- /Zi /MD
 !ELSE
-OPTIMIZATION=/Yc /Ox /GFS- /GR- /MD
+OPTIMIZATION=/Yc /Ox /GFS- /GR- /Zi /MD
 !ENDIF
 LINK_SWITCHES=/nologo /release /opt:nowin98,ref,icf=10 /largeaddressaware /debug
 
-$(CPU)\strarc.exe: $(CPU)\strarc.obj $(CPU)\constnam.obj $(CPU)\sleep.obj $(CPU)\restore.obj $(CPU)\backup.obj $(CPU)\regsnap.obj $(CPU)\linktrack.obj $(CPU)\lnk.obj strarc.res ..\lib\minwcrt.lib Makefile
-	link $(LINK_SWITCHES) /out:$(CPU)\strarc.exe /pdb:$(CPU)\strarc.pdb $(CPU)\strarc.obj $(CPU)\constnam.obj $(CPU)\sleep.obj $(CPU)\restore.obj $(CPU)\backup.obj $(CPU)\regsnap.obj $(CPU)\linktrack.obj $(CPU)\lnk.obj strarc.res
+$(CPU)\strarc.exe: ..\lib\minwcrt.lib Makefile                              $(CPU)\strarc.obj $(CPU)\constnam.obj $(CPU)\restore.obj $(CPU)\backup.obj $(CPU)\regsnap.obj $(CPU)\bfcopy.obj $(CPU)\lnk.obj strarc.res
+	link $(LINK_SWITCHES) /out:$(CPU)\strarc.exe /pdb:$(CPU)\strarc.pdb $(CPU)\strarc.obj $(CPU)\constnam.obj $(CPU)\restore.obj $(CPU)\backup.obj $(CPU)\regsnap.obj $(CPU)\bfcopy.obj $(CPU)\lnk.obj strarc.res
 
-$(CPU)\strarc.obj: strarc.cpp strarc.hpp ..\include\winstrct.hpp ..\include\winstrct.h Makefile
+$(CPU)\strarc.obj: strarc.cpp strarc.hpp
 	cl /c $(WARNING_LEVEL) $(OPTIMIZATION) $(CPP_DEFINE) /Fp$(CPU)\strarc /Fo$(CPU)\strarc strarc.cpp
 
-$(CPU)\constnam.obj: constnam.cpp strarc.hpp ..\include\winstrct.hpp ..\include\winstrct.h Makefile
+$(CPU)\constnam.obj: constnam.cpp strarc.hpp
 	cl /c $(WARNING_LEVEL) $(OPTIMIZATION) $(CPP_DEFINE) /Fp$(CPU)\constnam /Fo$(CPU)\constnam constnam.cpp
 
-$(CPU)\sleep.obj: sleep.cpp sleep.h ..\include\winstrct.hpp ..\include\winstrct.h Makefile
-	cl /c $(WARNING_LEVEL) $(OPTIMIZATION) $(CPP_DEFINE) /Fp$(CPU)\sleep /Fo$(CPU)\sleep sleep.cpp
-
-$(CPU)\restore.obj: restore.cpp strarc.hpp lnk.h ..\include\winstrct.hpp ..\include\winstrct.h Makefile
+$(CPU)\restore.obj: restore.cpp strarc.hpp
 	cl /c $(WARNING_LEVEL) $(OPTIMIZATION) $(CPP_DEFINE) /Fp$(CPU)\restore /Fo$(CPU)\restore restore.cpp
 
-$(CPU)\backup.obj: backup.cpp strarc.hpp linktrack.hpp ..\include\winstrct.hpp ..\include\winstrct.h ..\include\wfind.h Makefile
+$(CPU)\backup.obj: backup.cpp strarc.hpp
 	cl /c $(WARNING_LEVEL) $(OPTIMIZATION) $(CPP_DEFINE) /Fp$(CPU)\backup /Fo$(CPU)\backup backup.cpp
 
-$(CPU)\regsnap.obj: regsnap.cpp strarc.hpp ..\include\winstrct.hpp ..\include\winstrct.h Makefile
+$(CPU)\regsnap.obj: regsnap.cpp strarc.hpp
 	cl /c $(WARNING_LEVEL) $(OPTIMIZATION) $(CPP_DEFINE) /Fp$(CPU)\regsnap /Fo$(CPU)\regsnap regsnap.cpp
 
-$(CPU)\linktrack.obj: linktrack.cpp strarc.hpp linktrack.hpp ..\include\winstrct.h Makefile
-	cl /c $(WARNING_LEVEL) $(OPTIMIZATION) $(CPP_DEFINE) /Fp$(CPU)\linktrack /Fo$(CPU)\linktrack linktrack.cpp
+$(CPU)\bfcopy.obj: bfcopy.cpp strarc.hpp
+	cl /c $(WARNING_LEVEL) $(OPTIMIZATION) $(CPP_DEFINE) /Fp$(CPU)\bfcopy /Fo$(CPU)\bfcopy bfcopy.cpp
 
 $(CPU)\lnk.obj: lnk.c lnk.h ..\include\winstrct.h Makefile
 	cl /c $(WARNING_LEVEL) $(OPTIMIZATION) $(C_DEFINE) /Fp$(CPU)\lnk /Fo$(CPU)\lnk lnk.c
 
 strarc.res: strarc.rc Makefile
 	rc strarc.rc
+
+strarc.hpp: linktrack.hpp ..\include\ntfileio.hpp ..\include\spsleep.h ..\include\winstrct.hpp ..\include\winstrct.h Makefile
 
 !IF "$(CPU)" == "i386"
 

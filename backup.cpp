@@ -17,218 +17,19 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 
+#include <windows.h>
+#include <ntdll.h>
+#include <intsafe.h>
 #include <winstrct.h>
 
-#include "sleep.h"
-
-#include <wfind.h>
-
 #include "strarc.hpp"
-#include "linktrack.hpp"
-
-#ifndef _WIN64
-#pragma comment(lib, "crthlp.lib")
-#pragma comment(lib, "crtdll.lib")
-#endif
 
 // This function backs up an object (file or directory) to the archive stream.
 
-// wczFile is the complete relative path from current directory to the object
-// to backup. wczShortName is the alternate short 8.3 name to store in the
-// header. If no short name should be stored for this file, set this parameter
-// to an empty string, L"". If the short name should be stored but is not
-// known when calling this function, set this parameter to NULL.
 bool
-BackupFile(LPWSTR wczFile, LPCWSTR wczShortName)
+StrArc::ReadFileStreamsToArchive(PUNICODE_STRING File,
+				 HANDLE hFile)
 {
-  if (ExcludedString(wczFile))
-    return true;
-
-  if ((BackupMethod == BACKUP_METHOD_DIFF) |
-      (BackupMethod == BACKUP_METHOD_INC))
-    {
-      if (!(GetFileAttributes(wczFile) & FILE_ATTRIBUTE_ARCHIVE))
-	return true;
-    }
-
-  if (bListFiles)
-    {
-      char *szFile = WideToOemAlloc(wczFile);
-      puts(szFile);
-      hfree(szFile);
-    }
-
-  if (wczShortName == NULL)
-    {
-      WFileFinder finddata(wczFile);
-      if (finddata)
-	{
-	  wczShortName = finddata.cAlternateFileName;
-	  if (wczShortName[0] == 0)
-	    wczShortName = NULL;
-	}
-    }
-  else if (wczShortName[0] == 0)
-    wczShortName = NULL;
-
-  if (bVerbose)
-    {
-      oem_printf(stderr, "%1!ws!", wczFile);
-      if (wczShortName != NULL)
-	oem_printf(stderr, ", short: %1!ws!", wczShortName);
-    }
-
-  DWORD dwCreateFileFlags =
-    FILE_FLAG_SEQUENTIAL_SCAN | FILE_FLAG_BACKUP_SEMANTICS;
-
-  // Check if this is a reparse point. In that case, do not follow it if the
-  // -j switch is given at the command line.
-  if (bLocal)
-    {
-      DWORD dwFileAttr = GetFileAttributes(wczFile);
-      if (dwFileAttr == INVALID_FILE_ATTRIBUTES)
-	dwFileAttr = 0;
-
-      if (dwFileAttr & FILE_ATTRIBUTE_REPARSE_POINT)
-	{
-	  if (bVerbose)
-	    fputs(", reparse point", stderr);
-	  dwCreateFileFlags |= FILE_FLAG_OPEN_REPARSE_POINT;
-	}
-    }
-
-  HANDLE hFile = INVALID_HANDLE_VALUE;
-  LPCWSTR wczFullPath = wczFile;
-  if ((wczFile[0] == L'.') & (wczFile[1] == 0))
-    {
-      DWORD dw = GetCurrentDirectory(sizeof(wczFullPathBuffer) /
-				     sizeof(*wczFullPathBuffer),
-				     wczFullPathBuffer);
-
-      if ((dw == 0) | (dw + 1 > sizeof(wczFullPathBuffer) /
-		       sizeof(*wczFullPathBuffer)))
-	{
-	  if (bVerbose)
-	    win_perrorA("Backing up current directory, but the current path "
-			"cannot be retrieved. Metadata for the current "
-			"directory will not be backed up.%%n"
-			"Error");
-	}
-      else
-	{
-	  wcscat(wczFullPathBuffer, L"\\");
-	  wczFullPath = wczFullPathBuffer;
-
-	  if (bVerbose)
-	    oem_printf(stderr,
-		       "%%n"
-		       "Backing up current directory using full path: "
-		       "'%1!ws!'%%n",
-		       wczFullPath);
-	}
-    }
-
-  hFile = CreateFile(wczFullPath, GENERIC_READ, FILE_SHARE_READ |
-		     FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
-		     OPEN_EXISTING, dwCreateFileFlags, NULL);
-
-  if (hFile == INVALID_HANDLE_VALUE)
-    {
-      WErrMsgA errmsg;
-      oem_printf(stderr, "strarc: Cannot open '%1!ws!': %2%%n", wczFullPath,
-		 errmsg);
-      return false;
-    }
-
-  // Check if this is a registry snapshot file.
-  if (bBackupRegistrySnapshots)
-    if (wcslen(wczFile) >=
-	(sizeof(REGISTRY_SNAPSHOT_FILE_EXTENSION) /
-	 sizeof(*REGISTRY_SNAPSHOT_FILE_EXTENSION)))
-      if (wcscmp(wczFile + wcslen(wczFile) -
-		 (sizeof(REGISTRY_SNAPSHOT_FILE_EXTENSION) /
-		  sizeof(*REGISTRY_SNAPSHOT_FILE_EXTENSION) - 1),
-		 REGISTRY_SNAPSHOT_FILE_EXTENSION) == 0)
-	{
-	  DeleteFile(wczFile);
-
-	  wczFile[wcslen(wczFile) -
-		 (sizeof(REGISTRY_SNAPSHOT_FILE_EXTENSION) /
-		  sizeof(*REGISTRY_SNAPSHOT_FILE_EXTENSION) - 1)] = 0;
-	}
-
-  header.dwStreamId = BACKUP_INVALID;
-  header.dwStreamAttributes = STRARC_MAGIC;
-  header.Size.QuadPart = sizeof BY_HANDLE_FILE_INFORMATION;
-  if (wczShortName != NULL)
-    header.Size.QuadPart += 26;
-  header.dwStreamNameSize = (DWORD) wcslen(wczFile) << 1;
-  wcsncpy(header.cStreamName, wczFile, header.dwStreamNameSize >> 1);
-  BY_HANDLE_FILE_INFORMATION *FileInfo = (BY_HANDLE_FILE_INFORMATION *)
-    (Buffer + HEADER_SIZE + header.dwStreamNameSize);
-  if (!GetFileInformationByHandle(hFile, FileInfo))
-    {
-      WErrMsgA errmsg;
-      oem_printf(stderr,
-		 "strarc: Cannot get file information for '%1!ws!': %2%%n",
-		 wczFile, errmsg);
-      CloseHandle(hFile);
-      return false;
-    }
-
-  if (BackupMethod != BACKUP_METHOD_COPY)
-    FileInfo->dwFileAttributes &= ~FILE_ATTRIBUTE_ARCHIVE;
-
-  if (wczShortName != NULL)
-    CopyMemory(Buffer + HEADER_SIZE + header.dwStreamNameSize +
-	       sizeof BY_HANDLE_FILE_INFORMATION, wczShortName, 26);
-
-  if (bVerbose)
-    fprintf(stderr, ", header: %u bytes",
-	    HEADER_SIZE + header.dwStreamNameSize + header.Size.LowPart);
-
-  WriteArchive(Buffer, HEADER_SIZE + header.dwStreamNameSize +
-	       header.Size.LowPart);
-
-  LPCWSTR wczLinkName = NULL;
-  if ((FileInfo->nNumberOfLinks > 1) && (bHardLinkSupport))
-    {
-      LARGE_INTEGER FileIndex;
-      FileIndex.LowPart = FileInfo->nFileIndexLow;
-      FileIndex.HighPart = FileInfo->nFileIndexHigh;
-
-      wczLinkName = MatchLink(FileInfo->dwVolumeSerialNumber,
-			      FileIndex.QuadPart, wczFile);
-    }
-
-  if (wczLinkName != NULL)
-    {
-      CloseHandle(hFile);
-
-      header.dwStreamId = BACKUP_LINK;
-      header.dwStreamAttributes = 0;
-      header.Size.QuadPart = wcslen(wczLinkName) << 1;
-      header.dwStreamNameSize = 0;
-      WriteArchive(Buffer, HEADER_SIZE);
-
-      if (bVerbose)
-	oem_printf(stderr, ", link to '%1!ws!': %2!u! bytes%%n",
-		   wczLinkName, HEADER_SIZE + header.Size.LowPart);
-
-      LPBYTE writebuffer = (LPBYTE) wczLinkName;
-      while (header.Size.QuadPart > 0)
-	{
-	  DWORD dwWriteLength = (header.Size.QuadPart > dwBufferSize) ?
-	    dwBufferSize : header.Size.LowPart;
-	  WriteArchive(writebuffer, dwWriteLength);
-	  writebuffer += dwWriteLength;
-	  header.Size.QuadPart -= dwWriteLength;
-	}
-
-      ++dwFileCounter;
-      return true;
-    }
-
   LPVOID lpCtx = NULL;
   for (;;)
     {
@@ -250,29 +51,20 @@ BackupFile(LPWSTR wczFile, LPCWSTR wczShortName)
 		      bProcessSecurity, &lpCtx))
 	{
 	  WErrMsgA errmsg;
-	  oem_printf(stderr, "strarc: Cannot read '%1!ws!': %2%%n",
-		     wczFile, errmsg);
-	  CloseHandle(hFile);
+	  oem_printf(stderr,
+		     "strarc: Cannot read '%2!.*ws!': %1%%n",
+		     errmsg,
+		     File->Length >> 1, File->Buffer);
 	  return false;
 	}
 
       if (dwBytesRead == 0)
 	{
 	  BackupRead(NULL, NULL, 0, NULL, TRUE, FALSE, &lpCtx);
-	  CloseHandle(hFile);
 	  ++dwFileCounter;
 
 	  if (bVerbose)
 	    fputs("EOF\r\n", stderr);
-
-	  if ((BackupMethod == BACKUP_METHOD_FULL) |
-	      (BackupMethod == BACKUP_METHOD_INC))
-	    {
-	      DWORD dwFileAttr = GetFileAttributes(wczFullPath);
-	      if (dwFileAttr != INVALID_FILE_ATTRIBUTES)
-		SetFileAttributes(wczFullPath,
-				  dwFileAttr & ~FILE_ATTRIBUTE_ARCHIVE);
-	    }
 
 	  return true;
 	}
@@ -284,104 +76,395 @@ BackupFile(LPWSTR wczFile, LPCWSTR wczShortName)
     }
 }
 
-void
-BackupDirectory(LPWSTR wczPath)
+// File is the complete relative path from current directory to the object
+// to backup. ShortName is the alternate short 8.3 name to store in the backup
+// stream header. If no short name should be stored for this file, set this
+// parameter to an empty string, L"". If the short name should be stored but is
+// not known when calling this function, set this parameter to NULL.
+bool
+StrArc::BackupFile(PUNICODE_STRING File,
+		   PUNICODE_STRING ShortName,
+		   bool bTraverseDirectories)
 {
-  wcscpy(wczPath, L"*");
-  WFileFinder finddata(wczCurrentPath);
+  if (ExcludedString(File, false))
+    return true;
 
-  if (!finddata)
-    return;
+  ACCESS_MASK file_access = GENERIC_READ;
+  if ((BackupMethod == BACKUP_METHOD_FULL) |
+      (BackupMethod == BACKUP_METHOD_INC))
+    file_access |= FILE_WRITE_ATTRIBUTES;
 
-  do
+  HANDLE hFile =
+    NativeOpenFile(RootDirectory,
+		   File,
+		   file_access,
+		   0,
+		   FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+		   FILE_OPEN_FOR_BACKUP_INTENT |
+		   FILE_SEQUENTIAL_ONLY |
+		   (bLocal ? FILE_OPEN_REPARSE_POINT : 0));
+  if ((!bLocal) & (hFile == INVALID_HANDLE_VALUE))
+    if (GetLastError() == ERROR_INVALID_PARAMETER)
+      hFile =
+	NativeOpenFile(RootDirectory,
+		       File,
+		       file_access,
+		       0,
+		       FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+		       FILE_OPEN_FOR_BACKUP_INTENT |
+		       FILE_SEQUENTIAL_ONLY);
+
+  if (hFile == INVALID_HANDLE_VALUE)
+    {
+      WErrMsgA errmsg;
+      oem_printf(stderr,
+		 "strarc: Cannot open '%2!.*ws!': %1%%n",
+		 errmsg,
+		 File->Length >> 1, File->Buffer);
+      return false;
+    }
+
+  BY_HANDLE_FILE_INFORMATION file_info;
+  if (!GetFileInformationByHandle(hFile, &file_info))
+    {
+      WErrMsgA errmsg;
+      oem_printf(stderr,
+		 "strarc: Cannot get file information for '%2!.*ws!': %1%%n",
+		 errmsg,
+		 File->Length >> 1, File->Buffer);
+      NtClose(hFile);
+      return false;
+    }
+
+  if (bTraverseDirectories)
+    if ((file_info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) &&
+	!(bLocal &&
+	  (file_info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)))
+      BackupDirectory(File, hFile);
+
+  if (bCancel)
+    {
+      NtClose(hFile);
+      return false;
+    }
+
+  if (File->Length == 0)
+    RtlInitUnicodeString(File, L".");
+
+  if (bVerbose)
+    {
+      oem_printf(stderr,
+		 "%1!.*ws!",
+		 File->Length >> 1, File->Buffer);
+
+      fprintf(stderr, ", attr=%#x", file_info.dwFileAttributes);
+    }
+
+  if ((BackupMethod == BACKUP_METHOD_DIFF) |
+      (BackupMethod == BACKUP_METHOD_INC))
+    if (file_info.dwFileAttributes & ~FILE_ATTRIBUTE_ARCHIVE)
+      {
+	NtClose(hFile);
+	return true;
+      }
+
+  if (bListFiles)
+    {
+      OEM_STRING oem_file_name;
+      NTSTATUS status =
+	RtlUnicodeStringToOemString(&oem_file_name,
+				    File,
+				    TRUE);
+      if (NT_SUCCESS(status))
+	{
+	  DWORD dwIO;
+	  WriteFile(GetStdHandle(STD_OUTPUT_HANDLE),
+		    oem_file_name.Buffer,
+		    oem_file_name.Length,
+		    &dwIO,
+		    NULL);
+	  WriteFile(GetStdHandle(STD_OUTPUT_HANDLE),
+		    "\r\n",
+		    2,
+		    &dwIO,
+		    NULL);
+	  RtlFreeOemString(&oem_file_name);
+	}
+    }
+
+  if (bListOnly)
+    {
+      if (bVerbose)
+	fputs("\r\n", stderr);
+
+      ++dwFileCounter;
+      NtClose(hFile);
+      return true;
+    }
+
+  // Check if this is a registry snapshot file.
+  if (bBackupRegistrySnapshots)
+    if (File->Length >= sizeof(REGISTRY_SNAPSHOT_FILE_EXTENSION))
+      if (wcscmp(File->Buffer + (File->Length -
+				 sizeof(REGISTRY_SNAPSHOT_FILE_EXTENSION)) /
+		 sizeof(*REGISTRY_SNAPSHOT_FILE_EXTENSION) + 1,
+		 REGISTRY_SNAPSHOT_FILE_EXTENSION) == 0)
+	{
+	  NativeDeleteFile(hFile);
+
+	  File->Length -= sizeof(REGISTRY_SNAPSHOT_FILE_EXTENSION) - 2;
+	}
+
+  // Save without archive attribute in archive, unless COPY mode.
+  if (BackupMethod != BACKUP_METHOD_COPY)
+    file_info.dwFileAttributes &= ~FILE_ATTRIBUTE_ARCHIVE;
+
+  header->dwStreamId = BACKUP_INVALID;
+  header->dwStreamAttributes = STRARC_MAGIC;
+  header->Size.QuadPart = sizeof BY_HANDLE_FILE_INFORMATION;
+  header->dwStreamNameSize = File->Length;
+  memcpy(header->cStreamName, File->Buffer, header->dwStreamNameSize);
+  *(PBY_HANDLE_FILE_INFORMATION)
+    (Buffer + HEADER_SIZE + header->dwStreamNameSize) = file_info;
+
+  if (ShortName == NULL)
+    {
+      UNICODE_STRING parent_dir;
+      UNICODE_STRING file_part;
+      SplitPath(File, &parent_dir, &file_part);
+
+      HANDLE hParentDir =
+	NativeOpenFile(RootDirectory,
+		       &parent_dir,
+		       FILE_LIST_DIRECTORY,
+		       0,
+		       FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+		       FILE_OPEN_FOR_BACKUP_INTENT);
+
+      if (hParentDir != INVALID_HANDLE_VALUE)
+	{
+	  if (finddata.FindFirst(hParentDir, &file_part))
+	    if (finddata.ShortNameLength > 0)
+	      {
+		header->Size.QuadPart += 26;
+
+		LPSTR shortname = (LPSTR)
+		  (Buffer + HEADER_SIZE + header->dwStreamNameSize +
+		   sizeof BY_HANDLE_FILE_INFORMATION);
+
+		memset(shortname, 0, 26);
+		memcpy(shortname,
+		       finddata.ShortName,
+		       finddata.ShortNameLength);
+
+		if (bVerbose)
+		  oem_printf(stderr,
+			     ", short='%1!.*ws!'",
+			     finddata.ShortNameLength >> 1,
+			     finddata.ShortName);
+	      }
+
+	  NtClose(hParentDir);
+	}
+    }
+  else if ((ShortName != NULL) ? (ShortName->Length > 0) : false)
+    {
+      header->Size.QuadPart += 26;
+
+      LPSTR shortname = (LPSTR)
+	(Buffer + HEADER_SIZE + header->dwStreamNameSize +
+	 sizeof BY_HANDLE_FILE_INFORMATION);
+
+      memset(shortname, 0, 26);
+      memcpy(shortname, ShortName->Buffer, ShortName->Length);
+
+      if (bVerbose)
+	oem_printf(stderr,
+		   ", short='%1!.*ws!'",
+		   ShortName->Length >> 1,
+		   ShortName->Buffer);
+    }
+
+  if (bVerbose)
+    fprintf(stderr, ", header: %u bytes",
+	    HEADER_SIZE + header->dwStreamNameSize + header->Size.LowPart);
+
+  WriteArchive(Buffer, HEADER_SIZE + header->dwStreamNameSize +
+	       header->Size.LowPart);
+
+  PUNICODE_STRING LinkName = NULL;
+  if ((file_info.nNumberOfLinks > 1) && (bHardLinkSupport))
+    {
+      LARGE_INTEGER FileIndex;
+      FileIndex.LowPart = file_info.nFileIndexLow;
+      FileIndex.HighPart = file_info.nFileIndexHigh;
+
+      LinkName =
+	MatchLink(file_info.dwVolumeSerialNumber,
+		  FileIndex.QuadPart,
+		  File);
+    }
+
+  if (LinkName != NULL)
+    {
+      NtClose(hFile);
+
+      header->dwStreamId = BACKUP_LINK;
+      header->dwStreamAttributes = 0;
+      header->Size.QuadPart = LinkName->Length;
+      header->dwStreamNameSize = 0;
+      WriteArchive(Buffer, HEADER_SIZE);
+
+      if (bVerbose)
+	oem_printf(stderr,
+		   ", link to '%2!.*ws!': %1!u! bytes%%n",
+		   HEADER_SIZE + header->Size.LowPart,
+		   LinkName->Length >> 1, LinkName->Buffer);
+
+      WriteArchive((LPBYTE) LinkName->Buffer, LinkName->Length);
+
+      ++dwFileCounter;
+      return true;
+    }
+
+  bool bResult = ReadFileStreamsToArchive(File, hFile);
+
+  if (bResult)
+    if (((BackupMethod == BACKUP_METHOD_FULL) |
+	 (BackupMethod == BACKUP_METHOD_INC)) &
+	((file_info.dwFileAttributes & FILE_ATTRIBUTE_ARCHIVE) != 0))
+      {
+	FILE_BASIC_INFORMATION basic_info = { 0 };
+	basic_info.FileAttributes =
+	  file_info.dwFileAttributes & ~FILE_ATTRIBUTE_ARCHIVE;
+
+	IO_STATUS_BLOCK io_status;
+	NTSTATUS status =
+	  NtSetInformationFile(hFile,
+			       &io_status,
+			       &basic_info,
+			       sizeof basic_info,
+			       FileBasicInformation);
+
+	if (!NT_SUCCESS(status))
+	  {
+	    WErrMsgA errmsg(RtlNtStatusToDosError(status));
+	    oem_printf(stderr,
+		       "strarc: Error resetting archive attribute on "
+		       "%2!.*ws!: %1%%n",
+		       errmsg,
+		       File->Length >> 1, File->Buffer);
+	  }
+      }
+
+  NtClose(hFile);
+
+  return bResult;
+}
+
+void
+StrArc::BackupDirectory(PUNICODE_STRING Path, HANDLE Handle)
+{
+  UNICODE_STRING base_path = *Path;
+
+  if ((base_path.Length == 2) &
+      (base_path.Buffer[0] == L'.'))
+    base_path.Length = 0;
+  else if (base_path.Length > 0)
+    {
+      NTSTATUS status = RtlAppendUnicodeToString(&base_path, L"\\");
+
+      if (!NT_SUCCESS(status))
+	{
+	  oem_printf(stderr,
+		     "strarc: Path is too long: '%1!.*ws!'%%n",
+		     Path->Length >> 1, Path->Buffer);
+	  return;
+	}
+    }
+
+  BYTE short_name_buffer[sizeof(finddata.ShortName)];
+  UNICODE_STRING short_name = { 0 };
+  short_name.MaximumLength = sizeof(short_name_buffer);
+  short_name.Buffer = (PWSTR) short_name_buffer;
+
+  for (finddata.FindFirst(Handle);
+       ;
+       finddata.FindNext(Handle))
     {
       YieldSingleProcessor();
+
+      if (!finddata)
+	{
+	  DWORD dwLastError = finddata.GetLastError();
+	  if (dwLastError == ERROR_NO_MORE_FILES)
+	    break;
+	  else
+	    {
+	      WErrMsgA errmsg(dwLastError);
+	      oem_printf(stderr,
+			 "strarc: Error reading directory '%2!.*ws!': %1%%n",
+			 errmsg,
+			 Path->Length >> 1, Path->Buffer);
+
+	      return;
+	    }
+	}
+
+      if ((finddata.FileNameLength == 2) &
+	  (finddata.FileName[0] == L'.'))
+	continue;
+      if ((finddata.FileNameLength == 4) &
+	  (finddata.FileName[0] == L'.') &
+	  (finddata.FileName[1] == L'.'))
+	continue;
 
       if (bCancel)
 	return;
 
-      if ((wcscmp(finddata.cFileName, L"..") == 0) |
-	  (wcscmp(finddata.cFileName, L".") == 0))
-	continue;
-
-      if (wcslen(finddata.cFileName) >=
-	  sizeof(wczCurrentPath) * sizeof(WCHAR) -
-	  (wczPath - wczCurrentPath) - sizeof(WCHAR) * 2)
+      if (finddata.FileNameLength > USHORT_MAX)
 	{
 	  oem_printf(stderr,
-		     "%1!ws!\\%2!ws!: Path is too long.%%n",
-		     wczCurrentPath, finddata.cFileName);
+		     "strarc: Path is too long: %1!.*ws!",
+		     Path->Length >> 1, Path->Buffer);
 
-	  status_exit(XE_TOO_LONG_PATH);
+	  oem_printf(stderr,
+		     "\\%1!.*ws!%%n",
+		     finddata.FileNameLength >> 1, finddata.FileName);
+
+	  continue;
 	}
 
-      wcscpy(wczPath, finddata.cFileName);
+      UNICODE_STRING entry_name;
+      InitCountedUnicodeString(&entry_name,
+			       finddata.FileName,
+			       (USHORT) finddata.FileNameLength);
 
-      if ((finddata.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) &&
-	  !(bLocal &&
-	    (finddata.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)))
+      UNICODE_STRING name = base_path;
+
+      NTSTATUS status =
+	RtlAppendUnicodeStringToString(&name,
+				       &entry_name);
+
+      if (!NT_SUCCESS(status))
 	{
-	  size_t iLen = wcslen(wczPath);
+	  oem_printf(stderr,
+		     "strarc: Path is too long: %1!.*ws!",
+		     Path->Length >> 1, Path->Buffer);
 
-	  wcscat(wczPath, L"\\");
+	  oem_printf(stderr,
+		     "\\%1!.*ws!%%n",
+		     finddata.FileNameLength >> 1, finddata.FileName);
 
-	  if (ExcludedString(wczCurrentPath))
-	    {
-	      if (bVerbose)
-		oem_printf(stderr, "Skipping directory: '%1!ws!'%%n",
-			   wczCurrentPath);
-	    }
-	  else
-	    {
-	      if (bVerbose)
-		oem_printf(stderr, "Backing up directory: '%1!ws!'%%n",
-			   wczCurrentPath);
-	      BackupDirectory(wczPath + wcslen(wczPath));
-	    }
-
-	  wczPath[iLen] = 0;
-
-	  if (!BackupFile(wczCurrentPath, finddata.cAlternateFileName))
-	    {
-	      if (bVerbose)
-		oem_printf(stderr, "Skipping directory: '%1!ws!'%%n",
-			   wczCurrentPath);
-
-	      continue;
-	    }
+	  continue;
 	}
-      else
-	BackupFile(wczCurrentPath, finddata.cAlternateFileName);
-    }
-  while (finddata.Next());
-}
 
-void
-BackupDirectoryTree()
-{
-  size_t iLen = wcslen(wczCurrentPath);
-  if (iLen == 0)
-    return;
+      short_name.Length = finddata.ShortNameLength;
+      if (finddata.ShortNameLength > 0)
+	memcpy(short_name.Buffer,
+	       finddata.ShortName,
+	       finddata.ShortNameLength);
 
-  size_t iLenOriginalEnd = iLen;
-
-  if ((wczCurrentPath[iLen - 1] != L'\\') &
-      (wczCurrentPath[iLen - 1] != L':') & (wczCurrentPath[iLen - 1] != L'/'))
-    {
-      wczCurrentPath[iLen++] = L'\\';
-      wczCurrentPath[iLen] = 0;
-    }
-
-  BackupDirectory(wczCurrentPath + iLen);
-
-  wczCurrentPath[iLenOriginalEnd] = 0;
-
-  BackupFile(wczCurrentPath, NULL);
-
-  if ((wczCurrentPath[iLen - 1] != L'\\') &
-      (wczCurrentPath[iLen - 1] != L':') & (wczCurrentPath[iLen - 1] != L'/'))
-    {
-      wczCurrentPath[iLen++] = L'\\';
-      wczCurrentPath[iLen] = 0;
+      BackupFile(&name, &short_name, true);
     }
 }

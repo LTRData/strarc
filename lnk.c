@@ -8,36 +8,31 @@
 #include <ntdll.h>
 #include <winstrct.h>
 
+#include <malloc.h>
+
 #include "lnk.h"
 
-#ifdef _WIN64
-#pragma comment(lib, "msvcrt.lib")
-#else
-#pragma comment(lib, "crthlp.lib")
-#pragma comment(lib, "crtdll.lib")
-#endif
-#pragma comment(lib, "ntdll.lib")
-
 BOOL
-SetShortFileName(HANDLE hFile, LPCWSTR lpName)
+SetShortFileName(HANDLE hFile, PUNICODE_STRING Name)
 {
   PFILE_NAME_INFORMATION FileNameData;
-  DWORD dwLength = (DWORD) wcslen(lpName) * sizeof *lpName;
   NTSTATUS Status;
   IO_STATUS_BLOCK IoStatusBlock;
 
-  FileNameData = halloc(dwLength + sizeof(FILE_NAME_INFORMATION) -
+  FileNameData = malloc(Name->Length + sizeof(FILE_NAME_INFORMATION) -
 			sizeof(FileNameData->FileName));
   if (FileNameData == NULL)
     return FALSE;
 
-  FileNameData->FileNameLength = dwLength;
-  memcpy(FileNameData->FileName, lpName, dwLength);
+  FileNameData->FileNameLength = Name->Length;
+  memcpy(FileNameData->FileName, Name->Buffer, Name->Length);
 
   Status = NtSetInformationFile(hFile, &IoStatusBlock, FileNameData,
-				dwLength + sizeof(FILE_NAME_INFORMATION) -
+				Name->Length + sizeof(FILE_NAME_INFORMATION) -
 				sizeof(FileNameData->FileName),
 				FileShortNameInformation);
+
+  free(FileNameData);
 
   if (NT_SUCCESS(Status))
     return TRUE;
@@ -49,45 +44,47 @@ SetShortFileName(HANDLE hFile, LPCWSTR lpName)
 }
 
 BOOL
-CreateHardLinkToOpenFile(HANDLE hFile, LPCWSTR lpTarget, BOOL bReplaceOk)
+CreateHardLinkToOpenFile(HANDLE hFile,
+			 HANDLE RootDirectory,
+			 PUNICODE_STRING Target,
+			 BOOLEAN ReplaceIfExists)
 {
-  UNICODE_STRING Target;
   PFILE_LINK_INFORMATION FileLinkData;
   NTSTATUS Status;
   IO_STATUS_BLOCK IoStatusBlock;
 
-  if (!RtlDosPathNameToNtPathName_U(lpTarget, &Target, NULL, NULL))
-    {
-      SetLastError(ERROR_PATH_NOT_FOUND);
-      return FALSE;
-    }
-
-  FileLinkData = halloc(Target.Length + sizeof(FILE_LINK_INFORMATION) -
+  FileLinkData = malloc(Target->Length + sizeof(FILE_LINK_INFORMATION) -
 			sizeof(FileLinkData->FileName));
   if (FileLinkData == NULL)
     return FALSE;
 
-  FileLinkData->ReplaceIfExists = (BOOLEAN) bReplaceOk;
-  FileLinkData->RootDirectory = NULL;
-  FileLinkData->FileNameLength = Target.Length;
-  memcpy(FileLinkData->FileName, Target.Buffer, Target.Length);
+  FileLinkData->ReplaceIfExists = ReplaceIfExists;
+  FileLinkData->RootDirectory = RootDirectory;
+  FileLinkData->FileNameLength = Target->Length;
+  memcpy(FileLinkData->FileName, Target->Buffer, Target->Length);
 
-  Status = NtSetInformationFile(hFile, &IoStatusBlock, FileLinkData,
-				Target.Length + sizeof(FILE_LINK_INFORMATION) -
+  Status = NtSetInformationFile(hFile,
+				&IoStatusBlock,
+				FileLinkData,
+				Target->Length +
+				sizeof(FILE_LINK_INFORMATION) -
 				sizeof(FileLinkData->FileName),
 				FileLinkInformation);
 
-  hfree(FileLinkData);
+  free(FileLinkData);
 
   if (NT_SUCCESS(Status))
     {
+      // If successful, open newly created link just to resynchronize file
+      // attributes and times, security desciptors etc from target file entry.
+
       OBJECT_ATTRIBUTES ObjectAttributes;
       HANDLE Handle;
       
       InitializeObjectAttributes(&ObjectAttributes,
-				 &Target,
-				 OBJ_CASE_INSENSITIVE,
-				 NULL,
+				 Target,
+				 0,
+				 RootDirectory,
 				 NULL);
 
       Status = NtOpenFile(&Handle,
@@ -101,12 +98,10 @@ CreateHardLinkToOpenFile(HANDLE hFile, LPCWSTR lpTarget, BOOL bReplaceOk)
       if (NT_SUCCESS(Status))
 	NtClose(Handle);
 
-      RtlFreeUnicodeString(&Target);
       return TRUE;
     }
   else
     {
-      RtlFreeUnicodeString(&Target);
       SetLastError(RtlNtStatusToDosError(Status));
       return FALSE;
     }

@@ -18,35 +18,9 @@
 #endif
 
 // Use the WinStructured library classes and functions.
-#include <winstrct.h>
-#include <shellapi.h>
+#include <windows.h>
 
-#include "sleep.h"
-
-#include <wfind.h>
-#include <wio.h>
-#include <wntsecur.h>
-#include <wprocess.h>
-#include <stdlib.h>
-
-#include "strarc.hpp"
-
-// Link the .exe file to CRTDLL.DLL. This makes it run without additional DLL
-// files even on very old versions of Windows NT.
-#ifdef _WIN64
-#pragma comment(lib, "msvcrt.lib")
-#else
-// crthlp.lib is only needed when x86 version is built with 14.00 and later
-// versions of MSVC++ compiler
-//#pragma comment(lib, "crthlp.lib")
-#pragma comment(lib, "crtdll.lib")
-// The WinStructured lib files are usually marked for linking with msvcrt.lib.
-#pragma comment(linker, "/nodefaultlib:msvcrt.lib")
-#endif
-
-#pragma comment(lib, "shell32.lib")
-#pragma comment(lib, "advapi32.lib")
-#pragma comment(lib, "ntdll.lib")
+#include <stdio.h>
 
 char *stream_ids[] = {
   "BACKUP_INVALID",        // 0x00000000 Header (not valid backup stream) 
@@ -64,7 +38,8 @@ char *stream_ids[] = {
 
 char stream_id_unknown[12];
 
-char *GetStreamIdDescription(DWORD StreamId)
+LPSTR
+GetStreamIdDescription(DWORD StreamId)
 {
   if (StreamId >= (sizeof(stream_ids) / sizeof(*stream_ids)))
     {
@@ -87,7 +62,8 @@ char *attrib_ids[] = {
 
 char attrib_id_list[260];
 
-char *GetStreamAttributesDescription(DWORD StreamAttributesId)
+LPSTR
+GetStreamAttributesDescription(DWORD StreamAttributesId)
 {
   if (StreamAttributesId == 0)
     return attrib_ids[0];

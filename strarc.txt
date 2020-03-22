@@ -1,10 +1,12 @@
 strarc - Stream Archive I/O Utility, a streaming backup/restore tool for
 Windows NT/2000/XP/2003 by Olof Lagerkvist. This documentation is written for
-version 0.1.4, 24 apr 2007, of this tool.
+version 0.2.0, 19 March 2013, of this tool.
+
+This document was last updated 19 March 2013.
 
 ---
 
-Copyright (C) Olof Lagerkvist - 2005-2007.
+Copyright (C) Olof Lagerkvist - 2004 - 2013.
 Some parts of the source code origins from a former commercial archive tool
 called 'ntarc' that was developed by Olof Lagerkvist 1998-2000. This source is
 now part of the open source of the free archiver 'strarc'.
@@ -49,11 +51,14 @@ TABLE OF CONTENTS
 
 2. Known bugs and limitations.
 
-2.1 The compression and sparse state of alternate data streams are not backed
-    up/restored.
-2.2 Short 8.3 filenames as alternate names can only be restored on Windows XP,
+2.1 Corruption of NTFS sparse files. (version 0.1.5a and older)
+2.2 Timestamps are lost for directories. (version 0.1.5a and older)
+2.3 Longer paths than 260 characters are not backed up. (version 0.1.6 and
+    older)
+2.4 The compression state of alternate data streams are not backed up/restored.
+2.5 Short 8.3 filenames as alternate names can only be restored on Windows XP,
     Server 2003 or later.
-2.3 The encryption attribute is not restored.
+2.6 Encryption state is not restored.
 
 3. FAQ and howtos
 
@@ -69,7 +74,7 @@ TABLE OF CONTENTS
 1. Command line switches and parameters.
 
 On backup operation:
-strarc -c [-afjr] [-z:CMD] [-m:f|d|i] [-l|v] [-s:ls] [-b:SIZE]
+strarc -c [-afjnr] [-z:CMD] [-m:f|d|i] [-l|v] [-s:ls] [-b:SIZE]
        [-e:EXCLUDE[,...]] [-i:INCLUDE[,...]] [-d:DIR] [ARCHIVE] [LIST ...]
 
 On restore operation:
@@ -125,6 +130,9 @@ strarc -t [-z:CMD] [-v] [-b:SIZE] [-e:EXCLUDE[,...]] [-i:INCLUDE[,...]]
 
        If one of the -m options is specified any archive attributes are not
        stored in the archive.
+
+-n     No actual backup operation. Used for example with -l to list files that
+       would have been backed up.
 
 -r     Backup loaded registry database of the running system.
 
@@ -218,20 +226,68 @@ LIST      List of files and directories to archive. If not given, the current
 
 ---
 
-2.1 The compression and sparse state of alternate data streams are not backed
-    up/restored.
+2.1 Corruption of NTFS sparse files. (version 0.1.5a and older)
 
-When backing up files from NTFS volumes the compression and sparse attributes are
-stored in the archive. Unless the -s:c switch is used at extraction the
-compression attribute will be restored by compressing/decompressing or setting
-the sparse state on the file after extraction. However, if a file has any
-alternate data streams, the compression or sparse states of the alternate data
-streams are not backed up. This is mainly due to a limitation in the archive
-file format in combination with how file attributes are stored (before the
-actual backup stream). To solve this problem the backup routine would need to
-analyze the data stream from the BackupRead() API to find alternate data streams
-and store a separate stream header with the compression attribute for that
-stream.
+From version 0.1.6, this bug has been fixed. With version 0.1.5a and older
+however, it is important to notice that sparse files were not correctly
+restored.
+
+This notice applied to version 0.1.5a and older:
+When sparse files were extracted from an archive, not-allocated areas were not
+extracted correctly, which meant that allocated areas were written in wrong
+places in the reconstituted file. This caused data corruption, unless all of
+the file data were allocated on disk at time of backup. Additionally, named
+alternate data streams with sparse attribute, were written to the main stream
+instead of the named alternate stream.
+
+The problem occured during restore operation. If archives made with version
+0.1.5a or older, containing sparse files, then version 0.1.6 and newer will
+extract them correctly.
+
+---
+
+2.2 Timestamps are lost for directories. (version 0.1.5a and older)
+
+From version 0.1.6, this bug has been fixed.
+
+This notice applied to version 0.1.5a and older:
+Because of the way strarc archived directories, with directory entry first
+followed by files in directory, files were be extracted in the same order.
+Unfortunately, this means that when files are extracted into a directory, the
+archived timestamps for the directory will be lost since the file extractions
+are considered updates to the directory, which will update last-change time to
+time of extraction.
+
+Beginning with version 0.1.6, archives are created with directory entry after
+files in the directory. This means that when restoring newer archives, time
+stamps will be preserved for directories.
+
+---
+
+2.3 Longer paths than 260 characters are not backed up. (version 0.1.6 and
+    older)
+
+From version 0.2.0, this bug has been fixed.
+
+Strarc was until version 0.1.6 not capable of finding and/or backing up files
+under paths longer than 260 characters.
+
+The working directory path, specified with the -p command line switch, still
+has this 260 character limitation in current version. Other command line
+parameters, file names in archives, read from standard input device, found in
+filesystem and similar, can be up to 32,767 characters long.
+
+---
+
+2.4 The compression state of alternate data streams are not backed up/restored.
+
+When backing up files from NTFS volumes the compression attributes are stored
+in the archive. Unless the -s:c switch is used at extraction the compression
+attribute will be restored by compressing/decompressing the file after
+extraction. However, if a file has any alternate data streams, the compression
+states of the alternate data streams are not backed up. This is mainly due to
+a limitation in the archive file format in combination with how file attributes
+are stored (before the actual backup stream).
 
 The same limitation applies to the Windows compact.exe tool or the compressing
 files from Windows Explorer, even if you select to compress a complete
@@ -240,22 +296,24 @@ compressed.
 
 ---
 
-2.2 Short 8.3 filenames as alternate names can only be restored on Windows XP,
+2.5 Short 8.3 filenames as alternate names can only be restored on Windows XP,
     Server 2003 or later.
 
 When backing up files with long file names or other names incompatible with
 DOS 8.3 naming convensions any alternate 8.3 name returned by the filesystem is
 stored in the archive. However, on Windows versions prior to Windows XP or
 Windows Server 2003 there was no clear and easy way of setting short names on
-files so when extracting an archive any alternate short names will not be
-restored on older Windows versions.
+files. Because of this, when extracting an archive any alternate short names
+will not be restored on older Windows versions.
 
 ---
 
-2.3 The encryption attribute is not restored.
+2.6 The encryption attribute is not restored.
 
 This tool does not encrypt files in archives even if they were encrypted on the
 disk. Neither are files re-encrypted when restored.
+
+This behaviour in planned to be changed in future releases.
 
 ===
 

@@ -18,23 +18,14 @@
 #endif
 
 #include <windows.h>
+#include <intsafe.h>
 #include <ntdll.h>
 #include <winstrct.h>
 
-#include "sleep.h"
-
 #include "strarc.hpp"
 
-#ifdef _WIN64
-#pragma comment(lib, "msvcrt.lib")
-#else
-#pragma comment(lib, "crthlp.lib")
-#pragma comment(lib, "crtdll.lib")
-#endif
-#pragma comment(lib, "ntdll.lib")
-
 void
-CreateRegistrySnapshots()
+StrArc::CreateRegistrySnapshots()
 {
   HKEY hKeyHiveList;
   LONG lRegErr;
@@ -54,9 +45,6 @@ CreateRegistrySnapshots()
 
   LPWSTR wczKeyName = (LPWSTR) Buffer;
   DWORD dwKeyNameSize = 32767;
-  LPWSTR wczFileName = wczFullPathBuffer;
-  DWORD dwFileNameSize =
-    sizeof(wczFullPathBuffer) - sizeof(*wczFullPathBuffer);
   DWORD dwIndex = 0;
 
   for(;;)
@@ -64,7 +52,7 @@ CreateRegistrySnapshots()
       YieldSingleProcessor();
 
       DWORD dwKeyNameReturnedSize = dwKeyNameSize;
-      DWORD dwFileNameReturnedSize = dwFileNameSize -
+      DWORD dwFileNameReturnedSize = FullPath.MaximumLength -
 	sizeof(REGISTRY_SNAPSHOT_FILE_EXTENSION);
       DWORD dwReturnedDataType;
 
@@ -74,13 +62,13 @@ CreateRegistrySnapshots()
 			     &dwKeyNameReturnedSize,
 			     NULL,
 			     &dwReturnedDataType,
-			     (LPBYTE) wczFileName,
+			     (LPBYTE) FullPath.Buffer,
 			     &dwFileNameReturnedSize);
 
       if (lRegErr == ERROR_NO_MORE_ITEMS)
 	break;
 
-      if ((lRegErr != ERROR_SUCCESS) & (lRegErr != ERROR_MORE_DATA))
+      if (lRegErr != ERROR_SUCCESS)
 	{
 	  WErrMsgA errmsg(lRegErr);
 	  oem_printf(stderr,
@@ -91,7 +79,7 @@ CreateRegistrySnapshots()
 	  break;
 	}
 
-      if (dwReturnedDataType != REG_SZ)
+      if ((dwReturnedDataType != REG_SZ) | (lRegErr == ERROR_MORE_DATA))
 	{
 	  oem_printf(stderr,
 		     "Wrong data type %1!u! for hive %2!ws!. "
@@ -101,26 +89,45 @@ CreateRegistrySnapshots()
 	  continue;
 	}
 
-      if (*wczFileName == 0)
+      FullPath.Buffer[dwFileNameReturnedSize] = 0;
+      FullPath.Length = (USHORT)(wcslen(FullPath.Buffer) << 1);
+
+      if (FullPath.Length == 0)
 	continue;
 
-      wcscat(wczFileName, REGISTRY_SNAPSHOT_FILE_EXTENSION);
+      NTSTATUS status =
+	RtlAppendUnicodeToString(&FullPath, REGISTRY_SNAPSHOT_FILE_EXTENSION);
+      if (!NT_SUCCESS(status))
+	{
+	  oem_printf(stderr,
+		     "Registry file path is too long: '%1!.*ws!'%%n"
+		     "Some of the snapshots will not be backed up.%%n",
+		     FullPath.Length >> 1,
+		     FullPath.Buffer);
+
+	  continue;
+	}
 
       if (bVerbose)
-	oem_printf(stderr, "'%1!ws!' -> '%2!ws!'%%n", wczKeyName, wczFileName);
+	oem_printf(stderr,
+		   "'%1!ws!' -> '%2!.*ws!'%%n",
+		   wczKeyName,
+		   FullPath.Length >> 1,
+		   FullPath.Buffer);
       else if (bListFiles)
 	oem_printf(stdout, "%1!ws!%%n", wczKeyName);
 
-      NTSTATUS status;
-      IO_STATUS_BLOCK io_status;
-      UNICODE_STRING name;
+      if (bListOnly)
+	continue;
+
+      UNICODE_STRING key_name;
       OBJECT_ATTRIBUTES object_attributes;
       HANDLE hKey;
       HANDLE hFile;
 
-      RtlInitUnicodeString(&name, wczKeyName);
+      RtlInitUnicodeString(&key_name, wczKeyName);
       InitializeObjectAttributes(&object_attributes,
-				 &name,
+				 &key_name,
 				 OBJ_CASE_INSENSITIVE | OBJ_OPENIF,
 				 NULL,
 				 NULL);
@@ -135,40 +142,37 @@ CreateRegistrySnapshots()
 
       if (!NT_SUCCESS(status))
 	{
-	  WNTErrMsgA errmsg(status);
+	  WErrMsgA errmsg(RtlNtStatusToDosError(status));
 	  oem_printf(stderr, "Error opening key '%1!ws!': %2%%n",
 		     wczKeyName, errmsg);
 
 	  continue;
 	}
 
-      RtlInitUnicodeString(&name, wczFileName);
-      InitializeObjectAttributes(&object_attributes,
-				 &name,
-				 OBJ_CASE_INSENSITIVE | OBJ_OPENIF,
-				 NULL,
-				 NULL);
+      hFile =
+	NativeCreateFile(NULL,
+			 &FullPath,
+			 GENERIC_WRITE,
+			 OBJ_CASE_INSENSITIVE,
+			 NULL,
+			 NULL,
+			 FILE_ATTRIBUTE_NORMAL,
+			 0,
+			 FILE_SUPERSEDE,
+			 0,
+			 FALSE);
 
-      status = NtCreateFile(&hFile,
-			    GENERIC_WRITE | SYNCHRONIZE,
-			    &object_attributes,
-			    &io_status,
-			    NULL,
-			    FILE_ATTRIBUTE_NORMAL,
-			    0,
-			    FILE_SUPERSEDE,
-			    FILE_NON_DIRECTORY_FILE |
-			    FILE_SYNCHRONOUS_IO_NONALERT,
-			    NULL,
-			    0);
-
-      if (!NT_SUCCESS(status))
+      if (hFile == INVALID_HANDLE_VALUE)
 	{
+	  WErrMsgA errmsg;
+
 	  NtClose(hKey);
 
-	  WNTErrMsgA errmsg(status);
-	  oem_printf(stderr, "Error creating file '%1!ws!': %2%%n",
-		     wczFileName, errmsg);
+	  oem_printf(stderr,
+		     "Error creating file '%2!.*ws!': %1%%n",
+		     errmsg,
+		     FullPath.Length >> 1,
+		     FullPath.Buffer);
 
 	  continue;
 	}
@@ -180,7 +184,7 @@ CreateRegistrySnapshots()
 
       if (!NT_SUCCESS(status))
 	{
-	  WNTErrMsgA errmsg(status);
+	  WErrMsgA errmsg(RtlNtStatusToDosError(status));
 	  oem_printf(stderr, "Error creating snapshot for '%1!ws!': %2%%n",
 		     wczKeyName, errmsg);
 

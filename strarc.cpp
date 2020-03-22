@@ -1,4 +1,4 @@
-/* Stream Archive I/O utility, Copyright (C) Olof Lagerkvist 2004-2009
+/* Stream Archive I/O utility, Copyright (C) Olof Lagerkvist 2004-2013
  *
  * strarc.cpp
  * Main source file. This contains the startup wmain() function, command line
@@ -20,12 +20,12 @@
 #endif
 
 // Use the WinStructured library classes and functions.
-#include <winstrct.h>
+#include <windows.h>
+#include <intsafe.h>
 #include <shellapi.h>
+#include <ntdll.h>
+#include <winstrct.h>
 
-#include "sleep.h"
-
-#include <wfind.h>
 #include <wio.h>
 #include <wntsecur.h>
 #include <wprocess.h>
@@ -33,83 +33,25 @@
 
 #include "strarc.hpp"
 
-// Link the .exe file to CRTDLL.DLL. This makes it run without additional DLL
-// files even on very old versions of Windows NT.
-#ifdef _WIN64
-#pragma comment(lib, "msvcrt.lib")
-#else
-// crthlp.lib is only needed when x86 version is built with 14.00 and later
-// versions of MSVC++ compiler
-//#pragma comment(lib, "crthlp.lib")
-#pragma comment(lib, "crtdll.lib")
-// The WinStructured lib files are usually marked for linking with msvcrt.lib.
-#pragma comment(linker, "/nodefaultlib:msvcrt.lib")
-#endif
-
 #pragma comment(lib, "shell32.lib")
 #pragma comment(lib, "advapi32.lib")
 #pragma comment(lib, "ntdll.lib")
 
-// This is the backup stream buffer size used in API calls. See description of
-// the -b command line switch for details.
-#ifndef DEFAULT_STREAM_BUFFER_SIZE
-#define DEFAULT_STREAM_BUFFER_SIZE (128 << 10)
-#endif
-
-// Definitions of common variables declared in strarc.hpp. No further
-// description here.
-DWORD dwFileCounter = 0;
-WCHAR wczCurrentPath[32768] = L"";
-WCHAR wczFullPathBuffer[32769] = L"";
-HANDLE RootDirectory = NULL;
-HANDLE hArchive = INVALID_HANDLE_VALUE;
-bool bCancel = false;
-bool bVerbose = false;
-bool bLocal = false;
-bool bBackupMode = false;
-bool bRestoreMode = false;
-bool bTestMode = false;
-bool bListFiles = false;
-BOOL bProcessSecurity = TRUE;
-bool bProcessFileTimes = true;
-bool bProcessFileAttribs = true;
-bool bHardLinkSupport = true;
-bool bRestoreCompression = true;
-bool bFilesFromStdIn = false;
-bool bFilesFromStdInUnicode = false;
-bool bOverwriteOlder = false;
-bool bOverwriteArchived = false;
-bool bFreshenExisting = false;
-DWORD dwArchiveCreation = CREATE_ALWAYS;
-DWORD dwExtractCreation = CREATE_NEW;
-bool bRestoreShortNamesOnly = false;
-bool bBackupRegistrySnapshots = false;
-
-BackupMethods BackupMethod = BACKUP_METHOD_COPY;
-
-DWORD dwExcludeStrings = 0;
-LPWSTR szExcludeStrings = NULL;
-DWORD dwIncludeStrings = 0;
-LPWSTR szIncludeStrings = NULL;
-DWORD dwBufferSize = DEFAULT_STREAM_BUFFER_SIZE;
-
-LPWSTR wczFilterCmd = NULL;
-
-LPBYTE Buffer = NULL;
+StrArc *Session = NULL;
 
 void
 usage()
 {
   fprintf(stderr,
-	  "Backup Stream archive I/O Utility, version 0.1.5\r\n"
+	  "Backup Stream archive I/O Utility, version 0.2.0\r\n"
 	  "Build date: " __DATE__
-	  ", Copyright (C) Olof Lagerkvist 2004-2009\r\n"
+	  ", Copyright (C) Olof Lagerkvist 2004-2013\r\n"
 	  "http://www.ltr-data.se      olof@ltr-data.se\r\n"
 	  "\n"
 	  "Usage:\r\n"
 	  "\n"
-	  "strarc -c[afj] [-z:CMD] [-m:f|d|i] [-l|v] [-s:ls] [-b:SIZE] [-e:EXCLUDE[,...]]\r\n"
-	  "       [-i:INCLUDE[,...]] [-d:DIR] [ARCHIVE] [LIST ...]\r\n"
+	  "strarc -c[afjr] [-z:CMD] [-m:f|d|i] [-l|v] [-s:ls] [-b:SIZE] [-e:EXCLUDE[,...]]\r\n"
+	  "       [-i:INCLUDE[,...]] [-d:DIR] [ARCHIVE|-n] [LIST ...]\r\n"
 	  "\n"
 	  "strarc -x [-8] [-z:CMD] [-l|v] [-s:aclst] [-o[:afn]] [-b:SIZE]\r\n"
 	  "       [-e:EXCLUDE[,...]] [-i:INCLUDE[,...]] [-d:DIR] [ARCHIVE]\r\n"
@@ -146,6 +88,9 @@ usage()
 	  "           set are backed up and the archive attributes are cleared on the\r\n"
 	  "           backed up files. This effectively means to backup all files changed\r\n"
 	  "           since the last full or incremental backup.\r\n"
+	  "\n"
+	  "-n     No actual backup operation. Used for example with -l to list files that\r\n"
+	  "       would have been backed up.\r\n"
 	  "\n"
 	  "-r     Backup loaded registry database of the running system.\r\n"
 	  "\n"
@@ -219,7 +164,8 @@ usage()
   exit(1);
 }
 
-BOOL WINAPI
+BOOL
+WINAPI
 ConsoleCtrlHandler(DWORD dwCtrlType)
 {
   switch (dwCtrlType)
@@ -228,7 +174,7 @@ ConsoleCtrlHandler(DWORD dwCtrlType)
     case CTRL_BREAK_EVENT:
     case CTRL_CLOSE_EVENT:
     case CTRL_SHUTDOWN_EVENT:
-      bCancel = true;
+      Session->bCancel = true;
       return TRUE;
 
     default:
@@ -240,7 +186,7 @@ ConsoleCtrlHandler(DWORD dwCtrlType)
 // displays an error message and exits the program.
 void
 __declspec(noreturn)
-status_exit(XError XE, LPCWSTR Name)
+  StrArc::status_exit(XError XE, LPCWSTR Name)
 {
   WErrMsgA syserrmsg;
   bool bDisplaySysErrMsg = false;
@@ -289,10 +235,6 @@ status_exit(XError XE, LPCWSTR Name)
     case XE_ARCHIVE_BAD_HEADER:
       errmsg = "\r\nstrarc aborted: Bad archive format, aborted.\r\n";
       break;
-    case XE_NOT_WINDOWSNT:
-      MessageBoxA(NULL, "This program requires Windows NT.", "strarc",
-		  MB_ICONERROR);
-      exit(XE);
     case XE_TOO_LONG_PATH:
       errmsg = "\r\nstrarc aborted: Target path is too long.\r\n";
       break;
@@ -316,168 +258,53 @@ status_exit(XError XE, LPCWSTR Name)
     fputs(errmsg, stderr);
   if (bDisplaySysErrMsg)
     if (Name != NULL)
-      win_perror(Name);
+      oem_printf(stderr, "'%1': %2%%n", Name, syserrmsg);
     else
       oem_printf(stderr, "%1%%n", syserrmsg);
 
   if (bVerbose)
-    fprintf(stderr, "\nstrarc aborted, %u files processed.\n", dwFileCounter);
+    fprintf(stderr,
+	    "\nstrarc aborted, %u file%s processed.\n",
+	    dwFileCounter,
+	    dwFileCounter != 1 ? "s" : "");
 
   exit(XE);
-}
-
-// This function enables backup and restore priviliges for this process. If
-// the priviliges are not granted that is silently ignored.
-BOOL
-EnableBackupPrivileges()
-{
-  HANDLE hToken;
-  BYTE buf[sizeof(TOKEN_PRIVILEGES) * 2];
-  TOKEN_PRIVILEGES *tkp = (TOKEN_PRIVILEGES *) buf;
-
-  if (!OpenProcessToken(GetCurrentProcess(),
-			TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &hToken))
-    return FALSE;
-
-  if (!LookupPrivilegeValue(NULL, SE_BACKUP_NAME, &tkp->Privileges[0].Luid))
-    return FALSE;
-
-  if (!LookupPrivilegeValue(NULL, SE_RESTORE_NAME, &tkp->Privileges[1].Luid))
-    return FALSE;
-
-  tkp->PrivilegeCount = 2;
-  tkp->Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
-  tkp->Privileges[1].Attributes = SE_PRIVILEGE_ENABLED;
-
-  return AdjustTokenPrivileges(hToken, FALSE, tkp, sizeof buf, NULL, NULL);
-}
-
-// This function examines all paths and filenames on behalf of the backup and
-// restore routines. It identifies names containing strings matching the -i or
-// -e switches on the command line and returns true if this name is ok to
-// process.
-bool
-ExcludedString(LPCWSTR wczPath)
-{
-  // This routine does not handle empty strings correctly so just for safe
-  // return to skip all empty strings (should not happen normaly).
-  if (*wczPath == 0)
-    return true;
-
-  if (dwExcludeStrings != 0)
-    {
-      DWORD dwExcludeString = dwExcludeStrings;
-      LPCWSTR wczExcludeString = szExcludeStrings;
-      LPCWSTR wczPathEnd = wczPath + wcslen(wczPath);
-
-      do
-	{
-	  DWORD_PTR dwExclStrLen = wcslen(wczExcludeString);
-
-	  for (LPCWSTR wczPathPtr = wczPath;
-	       (DWORD) (wczPathEnd - wczPathPtr) >= dwExclStrLen;
-	       wczPathPtr++)
-	    if (wcsnicmp(wczPathPtr, wczExcludeString, dwExclStrLen) == 0)
-	      return true;
-
-	  wczExcludeString += dwExclStrLen + 1;
-	}
-      while (--dwExcludeString);
-    }
-
-  if (dwIncludeStrings == 0)
-    return false;
-
-  // If a directory, do not skip it just because it does not match any of the
-  // -i strings.
-  switch (wczPath[wcslen(wczPath) - 1])
-    {
-    case L'\\':
-    case L'/':
-      return false;
-    }
-
-  DWORD dwIncludeString = dwIncludeStrings;
-  LPCWSTR wczIncludeString = szIncludeStrings;
-  LPCWSTR wczPathEnd = wczPath + wcslen(wczPath);
-
-  do
-    {
-      DWORD_PTR dwInclStrLen = wcslen(wczIncludeString);
-
-      for (LPCWSTR wczPathPtr = wczPath;
-	   (DWORD) (wczPathEnd - wczPathPtr) >= dwInclStrLen; wczPathPtr++)
-	if (wcsnicmp(wczPathPtr, wczIncludeString, dwInclStrLen) == 0)
-	  return false;
-
-      wczIncludeString += dwInclStrLen + 1;
-    }
-  while (--dwIncludeString);
-
-  return true;
-}
-
-// This function creates the directory specified with the wczPath parameter and
-// also creates any directories necessary above it in the tree. It works very
-// much like MakeSureDirectoryPathExists() in the image helper library but this
-// is a Unicode function.
-bool
-CreateDirectoryPath(LPCWSTR wczPath)
-{
-  for (;;)
-    {
-      if (CreateDirectory(wczPath, NULL))
-	return true;
-
-      if (win_errno != ERROR_PATH_NOT_FOUND)
-	return false;
-
-      if (wcslen(wczPath) > 32767)
-	return false;
-
-      LPWSTR wczNewPath = wcsdup(wczPath);
-      if (wczNewPath == NULL)
-	return false;
-
-      YieldSingleProcessor();
-
-      LPWSTR lpSep;
-      for (lpSep = wcschr(wczNewPath, L'/');
-	   lpSep != NULL; lpSep = wcschr(lpSep + 1, L'/'))
-	*lpSep = L'\\';
-
-      for (lpSep = wcsrchr(wczNewPath, L'\\');
-	   lpSep != NULL; lpSep = wcsrchr(wczNewPath, L'\\'))
-	{
-	  *lpSep = 0;
-
-	  if (CreateDirectory(wczNewPath, NULL))
-	    break;
-	}
-
-      if (lpSep == NULL)
-	if (!CreateDirectory(wczNewPath, NULL))
-	  {
-	    free(wczNewPath);
-	    return false;
-	  }
-
-      free(wczNewPath);
-    }
 }
 
 int
 __cdecl
 wmain(int argc, LPWSTR *argv)
 {
-  LPWSTR wczStartDir = NULL;
-
   SetOemPrintFLineLength(GetStdHandle(STD_ERROR_HANDLE));
 
+  // This call enables backup and restore priviliges for this process. If
+  // the priviliges are not granted that is silently ignored. Later file I/O
+  // will give appropriate error returns anyway, if privileges were actually
+  // needed.
+  EnableBackupPrivileges();
+
+  Session = new StrArc;
+
+  int ec = Session->Main(argc, argv);
+
+  delete Session;
+
+  return ec;
+}
+
+int
+StrArc::Main(int argc, LPWSTR *argv)
+{
   if (argc > 1 ? (argv[1][0] | 0x02) != L'/' : true)
     usage();
 
-  EnableBackupPrivileges();
+  bool bBackupMode = false;
+  bool bRestoreMode = false;
+  bool bFilesFromStdIn = false;
+  bool bFilesFromStdInUnicode = false;
+  DWORD dwArchiveCreation = CREATE_ALWAYS;
+  LPWSTR wczFilterCmd = NULL;
+  LPWSTR wczStartDir = NULL;
 
   // Nice argument parse loop :)
   while (argc > 1 ? argv[1][0] ? ((argv[1][0] | 0x02) == L'/') &
@@ -508,6 +335,11 @@ wmain(int argc, LPWSTR *argv)
 	  case L'8':
 	    bRestoreShortNamesOnly = true;
 	    break;
+	  case L'n':
+	    if (!bBackupMode)
+	      usage();
+	    bListOnly = true;
+	    break;
 	  case L'o':
 	    if (argv[1][1] == L':')
 	      {
@@ -532,7 +364,7 @@ wmain(int argc, LPWSTR *argv)
 		    }
 	      }
 
-	    dwExtractCreation = OPEN_ALWAYS;
+	    dwExtractCreation = FILE_OPEN_IF;
 	    break;
 	  case L'l':
 	    bListFiles = true;
@@ -688,8 +520,8 @@ wmain(int argc, LPWSTR *argv)
     }
 
   // Are we creating an archive to stdout?
-  bool bTargetStdOut =
-    argc < 2 ? true : (argv[1][0] == 0) | (wcscmp(argv[1], L"-") == 0);
+  bool bTargetStdOut = (!bListOnly) &
+    (argc < 2 ? true : (argv[1][0] == 0) | (wcscmp(argv[1], L"-") == 0));
 
   if (bListFiles & bBackupMode & bTargetStdOut)
     {
@@ -703,101 +535,153 @@ wmain(int argc, LPWSTR *argv)
     status_exit(XE_BAD_BUFFER);
 
   // Try to allocate the buffer size (possibly specified on command line).
-  Buffer = (LPBYTE) LocalAlloc(LPTR, dwBufferSize);
-
-  if (Buffer == NULL)
+  if (!InitializeBuffer(dwBufferSize))
     status_exit(XE_NOT_ENOUGH_MEMORY);
 
+  PROCESS_INFORMATION piFilter = { 0 };
   if (bBackupRegistrySnapshots)
     if (!bBackupMode)
       usage();
     else
       CreateRegistrySnapshots();
 
-  WSecurityAttributes sa;
-  sa.bInheritHandle = TRUE;
-  if (bTargetStdOut)
-    hArchive = GetStdHandle(bBackupMode ?
-			    STD_OUTPUT_HANDLE : STD_INPUT_HANDLE);
-  else
+  if (!bListOnly)
     {
-      hArchive = CreateFile(argv[1],
-			    bBackupMode ? GENERIC_WRITE : GENERIC_READ,
-			    FILE_SHARE_READ | FILE_SHARE_DELETE |
-			    (bBackupMode ? 0 : FILE_SHARE_WRITE), &sa,
-			    bBackupMode ? dwArchiveCreation : OPEN_EXISTING,
-			    (bBackupMode ? FILE_ATTRIBUTE_NORMAL : 0) |
-			    FILE_FLAG_SEQUENTIAL_SCAN |
-			    FILE_FLAG_BACKUP_SEMANTICS, NULL);
-
-      if (hArchive == INVALID_HANDLE_VALUE)
-	status_exit(XE_ARCHIVE_OPEN, argv[1]);
-    }
-
-  if (dwArchiveCreation == OPEN_ALWAYS)
-    SetFilePointer(hArchive, 0, 0, FILE_END);
-  else
-    SetEndOfFile(hArchive);
-
-  // If we should filter through a compression utility.
-  PROCESS_INFORMATION piFilter = { 0 };
-  if (wczFilterCmd != NULL)
-    {
-      HANDLE hPipe[2];
-      if (!CreatePipe(&hPipe[0], &hPipe[1], NULL, 0))
-	status_exit(XE_CREATE_PIPE);
-
-      // This is a special trick to make the child process only inherit one end
-      // of the pipe.
-      WStartupInfo si;
-      si.dwFlags = STARTF_USESTDHANDLES;
-      if (bBackupMode)
-	{
-	  SetHandleInformation(hPipe[0],
-			       HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT);
-
-	  si.hStdInput = hPipe[0];
-	  si.hStdOutput = hArchive;
-
-	  hArchive = hPipe[1];
-	}
+      WSecurityAttributes sa;
+      sa.bInheritHandle = TRUE;
+      if (bTargetStdOut)
+	hArchive = GetStdHandle(bBackupMode ?
+				STD_OUTPUT_HANDLE : STD_INPUT_HANDLE);
       else
 	{
-	  SetHandleInformation(hPipe[1],
-			       HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT);
+	  hArchive = CreateFile(argv[1],
+				bBackupMode ? GENERIC_WRITE : GENERIC_READ,
+				FILE_SHARE_READ | FILE_SHARE_DELETE |
+				(bBackupMode ? 0 : FILE_SHARE_WRITE),
+				&sa,
+				bBackupMode ?
+				dwArchiveCreation : OPEN_EXISTING,
+				(bBackupMode ? FILE_ATTRIBUTE_NORMAL : 0) |
+				FILE_FLAG_SEQUENTIAL_SCAN |
+				FILE_FLAG_BACKUP_SEMANTICS,
+				NULL);
 
-	  si.hStdInput = hArchive;
-	  si.hStdOutput = hPipe[1];
-
-	  hArchive = hPipe[0];
+	  if (hArchive == INVALID_HANDLE_VALUE)
+	    status_exit(XE_ARCHIVE_OPEN, argv[1]);
 	}
-      si.hStdError = GetStdHandle(STD_ERROR_HANDLE);
-      if (!CreateProcess(NULL, wczFilterCmd, NULL, NULL, TRUE, 0, NULL, NULL,
-			 &si, &piFilter))
-	status_exit(XE_FILTER_EXECUTE, wczFilterCmd);
 
-      CloseHandle(si.hStdInput);
-      CloseHandle(si.hStdOutput);
-    }
+      if (dwArchiveCreation == OPEN_ALWAYS)
+	SetFilePointer(hArchive, 0, 0, FILE_END);
+      else
+	SetEndOfFile(hArchive);
 
-  if (wczStartDir != NULL)
-    if (bBackupMode)
-      {
-	if (!SetCurrentDirectory(wczStartDir))
-	  status_exit(XE_CHANGE_DIR, wczStartDir);
-      }
-    else
-      {
-	if (!SetCurrentDirectory(wczStartDir))
-	  if (CreateDirectoryPath(wczStartDir))
+      // If we should filter through a compression utility.
+      if (wczFilterCmd != NULL)
+	{
+	  HANDLE hPipe[2];
+	  if (!CreatePipe(&hPipe[0], &hPipe[1], NULL, 0))
+	    status_exit(XE_CREATE_PIPE);
+
+	  // This makes child process only inherit one end of the pipe.
+	  WStartupInfo si;
+	  si.dwFlags = STARTF_USESTDHANDLES;
+	  if (bBackupMode)
 	    {
-	      if (!SetCurrentDirectory(wczStartDir))
-		status_exit(XE_CHANGE_DIR, wczStartDir);
+	      SetHandleInformation(hPipe[0],
+				   HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT);
+
+	      si.hStdInput = hPipe[0];
+	      si.hStdOutput = hArchive;
+
+	      hArchive = hPipe[1];
 	    }
 	  else
-	    status_exit(XE_CREATE_DIR, wczStartDir);
-      }
-  
+	    {
+	      SetHandleInformation(hPipe[1],
+				   HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT);
+
+	      si.hStdInput = hArchive;
+	      si.hStdOutput = hPipe[1];
+
+	      hArchive = hPipe[0];
+	    }
+	  si.hStdError = GetStdHandle(STD_ERROR_HANDLE);
+	  if (!CreateProcess(NULL, wczFilterCmd, NULL, NULL, TRUE, 0, NULL,
+			     NULL, &si, &piFilter))
+	    status_exit(XE_FILTER_EXECUTE, wczFilterCmd);
+
+	  CloseHandle(si.hStdInput);
+	  CloseHandle(si.hStdOutput);
+	}
+
+      argv++;
+      argc--;
+    }
+
+  HANDLE root_dir;
+  UNICODE_STRING start_dir;
+  if (wczStartDir == NULL)
+    {
+      root_dir = NtCurrentDirectoryHandle();
+      RtlCreateUnicodeString(&start_dir, L"");
+    }
+  else
+    {
+      root_dir = NULL;
+
+      NTSTATUS status =
+	RtlDosPathNameToNtPathName_U(wczStartDir, &start_dir, NULL, NULL);
+
+      if (!NT_SUCCESS(status))
+	{
+	  SetLastError(RtlNtStatusToDosError(status));
+	  status_exit(XE_CHANGE_DIR, wczStartDir);
+	}
+
+      if (bVerbose)
+	oem_printf(stderr,
+		   "Working directory is '%1!.*ws!'%%n",
+		   start_dir.Length >> 1,
+		   start_dir.Buffer);
+    }
+
+  if (bBackupMode)
+    {
+      RootDirectory =
+	NativeOpenFile(root_dir,
+		       &start_dir,
+		       FILE_LIST_DIRECTORY |
+		       FILE_TRAVERSE,
+		       OBJ_CASE_INSENSITIVE,
+		       FILE_SHARE_READ |
+		       FILE_SHARE_WRITE |
+		       FILE_SHARE_DELETE,
+		       FILE_DIRECTORY_FILE);
+
+      if (RootDirectory == INVALID_HANDLE_VALUE)
+	status_exit(XE_CHANGE_DIR, wczStartDir);
+    }
+  else
+    {
+      RootDirectory =
+	NativeCreateDirectory(root_dir,
+			      &start_dir,
+			      FILE_LIST_DIRECTORY |
+			      FILE_TRAVERSE,
+			      OBJ_CASE_INSENSITIVE,
+			      NULL,
+			      FILE_ATTRIBUTE_NORMAL,
+			      FILE_SHARE_READ |
+			      FILE_SHARE_WRITE |
+			      FILE_SHARE_DELETE,
+			      FILE_DIRECTORY_FILE,
+			      TRUE);
+      if (RootDirectory == INVALID_HANDLE_VALUE)
+	status_exit(XE_CHANGE_DIR, wczStartDir);
+    }
+
+  RtlFreeUnicodeString(&start_dir);
+
   SetConsoleCtrlHandler(ConsoleCtrlHandler, TRUE);
 
   if (bRestoreMode | bTestMode)
@@ -807,85 +691,45 @@ wmain(int argc, LPWSTR *argv)
       if (bVerbose)
 	if (bCancel)
 	  fprintf(stderr,
-		  "strarc cancelled, %u files %s.\n", dwFileCounter,
+		  "strarc cancelled, %u file%s %s.\n",
+		  dwFileCounter,
+		  dwFileCounter != 1 ? "s" : "",
 		  bTestMode ? "found in archive" : "restored");
 	else
 	  fprintf(stderr,
-		  "strarc done, %u files %s.\n", dwFileCounter,
+		  "strarc done, %u file%s %s.\n",
+		  dwFileCounter,
+		  dwFileCounter != 1 ? "s" : "",
 		  bTestMode ? "found in archive" : "restored");
 
       return 0;
     }
 
-  if (argc > 2)
-    while (argc-- > 2)
+  if (dwBufferSize < HEADER_SIZE)
+    status_exit(XE_BAD_BUFFER);
+
+  if (argc > 1)
+    while (argc-- > 1)
       {
 	YieldSingleProcessor();
 
 	if (bCancel)
 	  break;
 
-	wczCurrentPath[(sizeof(wczCurrentPath) / sizeof(*wczCurrentPath)) -
-		       14] = 0;
+	LPWSTR wczFile = (argv++)[1];
 
-	wcsncpy(wczCurrentPath, argv++[2],
-		sizeof(wczCurrentPath) / sizeof(*wczCurrentPath));
+	UNICODE_STRING file_name;
+	RtlInitUnicodeString(&file_name, wczFile);
 
-	if (wczCurrentPath
-	    [(sizeof(wczCurrentPath) / sizeof(*wczCurrentPath)) - 14] != 0)
+	if (file_name.Length > FullPath.MaximumLength)
 	  {
-	    fprintf(stderr, "strarc: The path is too long: '%ws'\n", argv[1]);
+	    fprintf(stderr, "strarc: The path is too long: '%ws'\n", wczFile);
 	    continue;
 	  }
 
-	size_t iLen = wcslen(wczCurrentPath);
-	if (iLen == 0)
-	  continue;
+	RtlCopyUnicodeString(&FullPath, &file_name);
 
-	if ((wcscmp(wczCurrentPath, L".") == 0) |
-	    (wcscmp(wczCurrentPath, L"..") == 0))
-	  {
-	    BackupDirectoryTree();
-	    continue;
-	  }
-
-	for (LPWSTR wczPathSlash = wcschr(wczCurrentPath, L'/');
-	     wczPathSlash != NULL;
-	     wczPathSlash = wcschr(wczPathSlash + 1, L'/'))
-	  *wczPathSlash = L'\\';
-
-	LPWSTR wczFilePart = wcsrchr(wczCurrentPath, L'\\');
-	if (wczFilePart == NULL)
-	  wczFilePart = wczCurrentPath;
-	else
-	  wczFilePart++;
-
-	WFileFinder found(wczCurrentPath);
-	if (!found)
-	  BackupDirectoryTree();
-	else
-	  do
-	    {
-	      if ((wcscmp(found.cFileName, L".") == 0) |
-		  (wcscmp(found.cFileName, L"..") == 0))
-		continue;
-
-	      if (wcslen(found.cFileName) + (wczFilePart - wczCurrentPath) >=
-		  (sizeof(wczCurrentPath) / sizeof(*wczCurrentPath)))
-		{
-		  *wczFilePart = 0;
-		  fprintf(stderr, "strarc: The path is too long '%ws%ws'\n",
-			  wczCurrentPath, found.cFileName);
-		  continue;
-		}
-
-	      wcsncpy(wczFilePart, found.cFileName,
-		      (sizeof(wczCurrentPath) / sizeof(*wczCurrentPath)) -
-		      (wczFilePart - wczCurrentPath));
-
-	      BackupDirectoryTree();
-	    }
-	  while (found.Next());
+	BackupFile(&FullPath, NULL, true);
       }
   else if (bFilesFromStdIn)
     if (bFilesFromStdInUnicode)
@@ -903,12 +747,14 @@ wmain(int argc, LPWSTR *argv)
 	    if (bCancel)
 	      break;
 
-	    WCHAR wczFile[32768] = L"";
+	    FullPath.Length = (USHORT)
+	      ol.LineRecvW(hInputFile,
+			   FullPath.Buffer,
+			   FullPath.MaximumLength >> 1);
 
-	    if (ol.LineRecvW(hInputFile, wczFile,
-			     sizeof(wczFile) / sizeof(*wczFile)) == 0)
+	    if (FullPath.Length == 0)
 	      {
-		if (GetLastError() == ERROR_SUCCESS)
+		if (GetLastError() == NO_ERROR)
 		  continue;
 
 		if (GetLastError() != ERROR_HANDLE_EOF)
@@ -917,7 +763,7 @@ wmain(int argc, LPWSTR *argv)
 		break;
 	      }
 
-	    BackupFile(wczFile, NULL);
+	    BackupFile(&FullPath, NULL, false);
 	  }
       }
     else
@@ -928,7 +774,6 @@ wmain(int argc, LPWSTR *argv)
 	  if (bCancel)
 	    break;
 
-	  WCHAR wczFile[32768] = L"";
 	  char czFile[32768] = "";
 
 	  if (fgets(czFile, sizeof czFile, stdin) == NULL)
@@ -947,18 +792,34 @@ wmain(int argc, LPWSTR *argv)
 	    continue;
 
 	  czFile[iLen - 1] = 0;
-	  MultiByteToWideChar(CP_ACP, 0, czFile, (int) iLen, wczFile,
-			      sizeof(wczFile) / sizeof(*wczFile));
 
-	  BackupFile(wczFile, NULL);
+	  ANSI_STRING file;
+	  RtlInitAnsiString(&file, czFile);
+
+	  NTSTATUS status =
+	    RtlAnsiStringToUnicodeString(&FullPath,
+					 &file,
+					 FALSE);
+
+	  if (!NT_SUCCESS(status))
+	    {
+	      WErrMsgA errmsg(RtlNtStatusToDosError(status));
+	      fprintf(stderr,
+		      "strarc: Too long path: '%s'\n", czFile);
+	      continue;
+	    }
+
+	  BackupFile(&FullPath, NULL, false);
 	}
   else
     {
-      BackupDirectory(wczCurrentPath);
-      BackupFile(L".", L"");
+      FullPath.Length = 0;
+      BackupFile(&FullPath, NULL, true);
     }
 
   CloseHandle(hArchive);
+  hArchive = NULL;
+
   if (piFilter.dwProcessId != 0)
     {
       if (bVerbose)
@@ -979,9 +840,16 @@ wmain(int argc, LPWSTR *argv)
   if (bVerbose)
     if (bCancel)
       fprintf(stderr,
-	      "strarc cancelled, %u files backed up.\n", dwFileCounter);
+	      "strarc cancelled, %u file%s %s.\n",
+	      dwFileCounter,
+	      dwFileCounter != 1 ? "s" : "",
+	      bListOnly ? "found" : "backed up");
     else
-      fprintf(stderr, "strarc done, %u files backed up.\n", dwFileCounter);
+      fprintf(stderr,
+	      "strarc done, %u file%s %s.\n",
+	      dwFileCounter,
+	      dwFileCounter != 1 ? "s" : "",
+	      bListOnly ? "found" : "backed up");
 
   return 0;
 }
@@ -993,7 +861,13 @@ wmainCRTStartup()
   int argc = 0;
   LPWSTR *argv = CommandLineToArgvW(GetCommandLine(), &argc);
   if (argv == NULL)
-    status_exit(XE_NOT_WINDOWSNT);
-  else
-    exit(wmain(argc, argv));
+    {
+      MessageBoxA(NULL,
+		  "This program requires Windows NT.",
+		  "strarc",
+		  MB_ICONERROR);
+      ExitProcess(XE_NOT_WINDOWSNT);
+    }
+
+  exit(wmain(argc, argv));
 }

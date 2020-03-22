@@ -1,36 +1,86 @@
-class LinkInfo
+#include <malloc.h>
+
+class LinkTrackerItem
 {
+
+private:
+
   DWORD dwVolumeSerialNumber;
   LONGLONG NodeNumber;
-  LPWSTR wczName;
-  LinkInfo *Next;
+  UNICODE_STRING Name;
+  LinkTrackerItem *Next;
 
-public:
-    LinkInfo(LinkInfo * _Next, LPCWSTR _wczName, DWORD _dwVolumeSerialNumber,
-	     LONGLONG _NodeNumber):Next(_Next), wczName(wcsdup(_wczName)),
-    dwVolumeSerialNumber(_dwVolumeSerialNumber),
-    NodeNumber(_NodeNumber & 0x0000FFFFFFFFFFFF)
+  LinkTrackerItem(LinkTrackerItem * _Next,
+		  PUNICODE_STRING _Name,
+		  DWORD _dwVolumeSerialNumber,
+		  LONGLONG _NodeNumber)
+    : Next(_Next),
+      dwVolumeSerialNumber(_dwVolumeSerialNumber),
+      NodeNumber(_NodeNumber & 0x0000FFFFFFFFFFFF)
   {
-    if (wczName == NULL)
-      status_exit(XE_NOT_ENOUGH_MEMORY_FOR_LINK_TRACKER);
+    Name.Buffer = (PWSTR) malloc(_Name->Length);
+
+    if (Name.Buffer == NULL)
+      return;
+
+    Name.Length = _Name->Length;
+    Name.MaximumLength = _Name->Length;
+
+    RtlCopyUnicodeString(&Name, _Name);
   }
 
-  bool Match(DWORD _dwVolumeSerialNumber, LONGLONG _NodeNumber,
-	     LPCWSTR * _wczName) const
+  ~LinkTrackerItem()
+  {
+    if (Name.Buffer != NULL)
+      free(Name.Buffer);
+  }
+
+public:
+
+  LinkTrackerItem *DeleteAndGetNext()
+  {
+    LinkTrackerItem *next_item = Next;
+    delete this;
+    return next_item;
+  }
+
+  static
+  LinkTrackerItem *NewItem(LinkTrackerItem * Next,
+			   PUNICODE_STRING Name,
+			   DWORD dwVolumeSerialNumber,
+			   LONGLONG NodeNumber)
+  {
+    LinkTrackerItem *item =
+      new LinkTrackerItem(Next, Name, dwVolumeSerialNumber, NodeNumber);
+
+    if (item == NULL)
+      return NULL;
+
+    if (item->Name.Buffer == NULL)
+      return NULL;
+
+    return item;
+  }
+
+  bool
+  Match(DWORD _dwVolumeSerialNumber,
+	LONGLONG _NodeNumber,
+	PUNICODE_STRING * _Name)
   {
     if (this == NULL)
       return false;
 
     if ((dwVolumeSerialNumber == _dwVolumeSerialNumber) &&
 	(NodeNumber == (_NodeNumber & 0x0000FFFFFFFFFFFF)))
-      *_wczName = wczName;
-    else
-      return false;
+      {
+	*_Name = &Name;
+	return true;
+      }
 
-    return true;
+    return false;
   }
 
-  LinkInfo *GetNext()
+  LinkTrackerItem *GetNext()
   {
     if (this == NULL)
       return NULL;
@@ -38,31 +88,3 @@ public:
     return Next;
   }
 };
-
-extern LinkInfo *LinkTracker[256];
-
-inline LPCWSTR
-MatchLink(DWORD dwVolumeSerialNumber, LONGLONG NodeNumber, LPCWSTR wczName)
-{
-  LPCWSTR wczLinkName = NULL;
-
-  for (LinkInfo * linkinfo = LinkTracker[(NodeNumber & 0xFF0) >> 4];
-       linkinfo != NULL; linkinfo = linkinfo->GetNext())
-    {
-      YieldSingleProcessor();
-
-      if (linkinfo->Match(dwVolumeSerialNumber, NodeNumber, &wczLinkName))
-	return wczLinkName;
-    }
-
-  LinkInfo *NewLinkInfo =
-    new LinkInfo(LinkTracker[(NodeNumber & 0xFF0) >> 4], wczName,
-		 dwVolumeSerialNumber, NodeNumber);
-
-  if (NewLinkInfo == NULL)
-    status_exit(XE_NOT_ENOUGH_MEMORY_FOR_LINK_TRACKER);
-
-  LinkTracker[(NodeNumber & 0xFF0) >> 4] = NewLinkInfo;
-
-  return NULL;
-}
