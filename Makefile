@@ -12,13 +12,19 @@ OPTIMIZATION=/Yc /Ox /GF /GR- /MD
 !ELSE
 OPTIMIZATION=/Yc /Ox /GFS- /GR- /MD
 !ENDIF
-LINK_SWITCHES=/nologo /release /opt:nowin98,ref,icf=10 /largeaddressaware
+LINK_SWITCHES=/nologo /release /opt:nowin98,ref,icf=10 /largeaddressaware /debug
 
-$(CPU)\strarc.exe: $(CPU)\strarc.obj $(CPU)\restore.obj $(CPU)\backup.obj $(CPU)\regsnap.obj $(CPU)\linktrack.obj $(CPU)\lnk.obj strarc.res ..\lib\minwcrt.lib Makefile
-	link $(LINK_SWITCHES) /out:$(CPU)\strarc.exe $(CPU)\strarc.obj $(CPU)\restore.obj $(CPU)\backup.obj $(CPU)\regsnap.obj $(CPU)\linktrack.obj $(CPU)\lnk.obj strarc.res
+$(CPU)\strarc.exe: $(CPU)\strarc.obj $(CPU)\constnam.obj $(CPU)\sleep.obj $(CPU)\restore.obj $(CPU)\backup.obj $(CPU)\regsnap.obj $(CPU)\linktrack.obj $(CPU)\lnk.obj strarc.res ..\lib\minwcrt.lib Makefile
+	link $(LINK_SWITCHES) /out:$(CPU)\strarc.exe /pdb:$(CPU)\strarc.pdb $(CPU)\strarc.obj $(CPU)\constnam.obj $(CPU)\sleep.obj $(CPU)\restore.obj $(CPU)\backup.obj $(CPU)\regsnap.obj $(CPU)\linktrack.obj $(CPU)\lnk.obj strarc.res
 
 $(CPU)\strarc.obj: strarc.cpp strarc.hpp ..\include\winstrct.hpp ..\include\winstrct.h Makefile
 	cl /c $(WARNING_LEVEL) $(OPTIMIZATION) $(CPP_DEFINE) /Fp$(CPU)\strarc /Fo$(CPU)\strarc strarc.cpp
+
+$(CPU)\constnam.obj: constnam.cpp strarc.hpp ..\include\winstrct.hpp ..\include\winstrct.h Makefile
+	cl /c $(WARNING_LEVEL) $(OPTIMIZATION) $(CPP_DEFINE) /Fp$(CPU)\constnam /Fo$(CPU)\constnam constnam.cpp
+
+$(CPU)\sleep.obj: sleep.cpp sleep.h ..\include\winstrct.hpp ..\include\winstrct.h Makefile
+	cl /c $(WARNING_LEVEL) $(OPTIMIZATION) $(CPP_DEFINE) /Fp$(CPU)\sleep /Fo$(CPU)\sleep sleep.cpp
 
 $(CPU)\restore.obj: restore.cpp strarc.hpp lnk.h ..\include\winstrct.hpp ..\include\winstrct.h Makefile
 	cl /c $(WARNING_LEVEL) $(OPTIMIZATION) $(CPP_DEFINE) /Fp$(CPU)\restore /Fo$(CPU)\restore restore.cpp
@@ -40,7 +46,7 @@ strarc.res: strarc.rc Makefile
 
 !IF "$(CPU)" == "i386"
 
-install: p:\utils\strarc.exe p:\utils\strarc.txt z:\ltr-website\files\strarc.txt.gz Makefile
+install: p:\utils\strarc.exe p:\utils\strarc.txt z:\ltr-website\ltr-data.se\files\strarc.txt.gz z:\ltr-website\ltr-data.se\files\strarc.txt.gz Makefile
 
 p:\utils\strarc.exe: i386\strarc.exe Makefile
 	copy /y i386\strarc.exe p:\utils\ 
@@ -48,8 +54,27 @@ p:\utils\strarc.exe: i386\strarc.exe Makefile
 p:\utils\strarc.txt: strarc.txt Makefile
 	copy /y strarc.txt p:\utils\ 
 
-z:\ltr-website\files\strarc.txt.gz: strarc.txt Makefile
-	tr -d \r < strarc.txt | gzip -9 > z:\ltr-website\files\strarc.txt.gz
+z:\ltr-website\ltr-data.se\files\strarc.txt: strarc.txt Makefile
+	tr -d \r < strarc.txt > z:\ltr-website\ltr-data.se\files\strarc.txt
+
+z:\ltr-website\ltr-data.se\files\strarc.txt.gz: strarc.txt Makefile
+	tr -d \r < strarc.txt | gzip -9 > z:\ltr-website\ltr-data.se\files\strarc.txt.gz
+
+!ELSEIF "$(CPU)" == "AMD64"
+
+install: p:\utils64\strarc.exe p:\utils64\strarc.txt z:\ltr-website\ltr-data.se\files\strarc.txt.gz z:\ltr-website\ltr-data.se\files\strarc.txt Makefile
+
+p:\utils64\strarc.exe: amd64\strarc.exe Makefile
+	copy /y amd64\strarc.exe p:\utils64\ 
+
+p:\utils64\strarc.txt: strarc.txt Makefile
+	copy /y strarc.txt p:\utils64\ 
+
+z:\ltr-website\ltr-data.se\files\strarc.txt: strarc.txt Makefile
+	tr -d \r < strarc.txt > z:\ltr-website\ltr-data.se\files\strarc.txt
+
+z:\ltr-website\ltr-data.se\files\strarc.txt.gz: strarc.txt Makefile
+	tr -d \r < strarc.txt | gzip -9 > z:\ltr-website\ltr-data.se\files\strarc.txt.gz
 
 !ENDIF
 

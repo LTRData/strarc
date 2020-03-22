@@ -22,6 +22,9 @@
 // Use the WinStructured library classes and functions.
 #include <winstrct.h>
 #include <shellapi.h>
+
+#include "sleep.h"
+
 #include <wfind.h>
 #include <wio.h>
 #include <wntsecur.h>
@@ -58,6 +61,7 @@
 DWORD dwFileCounter = 0;
 WCHAR wczCurrentPath[32768] = L"";
 WCHAR wczFullPathBuffer[32769] = L"";
+HANDLE RootDirectory = NULL;
 HANDLE hArchive = INVALID_HANDLE_VALUE;
 bool bCancel = false;
 bool bVerbose = false;
@@ -435,7 +439,7 @@ CreateDirectoryPath(LPCWSTR wczPath)
       if (wczNewPath == NULL)
 	return false;
 
-      Sleep(0);
+      YieldSingleProcessor();
 
       LPWSTR lpSep;
       for (lpSep = wcschr(wczNewPath, L'/');
@@ -467,6 +471,8 @@ __cdecl
 wmain(int argc, LPWSTR *argv)
 {
   LPWSTR wczStartDir = NULL;
+
+  SetOemPrintFLineLength(GetStdHandle(STD_ERROR_HANDLE));
 
   if (argc > 1 ? (argv[1][0] | 0x02) != L'/' : true)
     usage();
@@ -814,7 +820,7 @@ wmain(int argc, LPWSTR *argv)
   if (argc > 2)
     while (argc-- > 2)
       {
-	Sleep(0);
+	YieldSingleProcessor();
 
 	if (bCancel)
 	  break;
@@ -892,7 +898,7 @@ wmain(int argc, LPWSTR *argv)
 
 	for (;;)
 	  {
-	    Sleep(0);
+	    YieldSingleProcessor();
 
 	    if (bCancel)
 	      break;
@@ -917,7 +923,7 @@ wmain(int argc, LPWSTR *argv)
     else
       for (;;)
 	{
-	  Sleep(0);
+	  YieldSingleProcessor();
 
 	  if (bCancel)
 	    break;
@@ -948,8 +954,8 @@ wmain(int argc, LPWSTR *argv)
 	}
   else
     {
-      BackupFile(L".", L"");
       BackupDirectory(wczCurrentPath);
+      BackupFile(L".", L"");
     }
 
   CloseHandle(hArchive);

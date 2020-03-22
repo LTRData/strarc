@@ -21,6 +21,8 @@
 #include <ntdll.h>
 #include <winstrct.h>
 
+#include "sleep.h"
+
 #include "strarc.hpp"
 
 #ifdef _WIN64
@@ -59,7 +61,7 @@ CreateRegistrySnapshots()
 
   for(;;)
     {
-      Sleep(0);
+      YieldSingleProcessor();
 
       DWORD dwKeyNameReturnedSize = dwKeyNameSize;
       DWORD dwFileNameReturnedSize = dwFileNameSize -

@@ -12,6 +12,8 @@
 // when backing up with the -r switch.
 #define REGISTRY_SNAPSHOT_FILE_EXTENSION L".$sards"
 
+extern HANDLE RootDirectory;
+
 // Handle to the open archive the program is working with.
 extern HANDLE hArchive;
 
@@ -101,6 +103,10 @@ bool CreateDirectoryPath(LPCWSTR wczPath);
 
 void CreateRegistrySnapshots();
 
+char *GetStreamIdDescription(DWORD StreamId);
+
+char *GetStreamAttributesDescription(DWORD StreamId);
+
 // This function reads up to the specified block size from the archive. If EOF,
 // it returns the number of bytes actually read.
 inline DWORD
@@ -157,10 +163,10 @@ ReadArchiveHeader(WIN32_STREAM_ID * lpBuf)
     return true;
 
   if (bVerbose)
-    fprintf(stderr,
-	    "strarc: Invalid header "
-	    "[id=%p, attr=%p, %u bytes, %p%p bytes], seeking...\n",
-	    header.dwStreamId, header.dwStreamAttributes,
+    fprintf(stderr, "strarc: Invalid header "
+	    "[id=%s, attr=%s, %u bytes name, size=0x%.8x%.8x], seeking...\n",
+	    GetStreamIdDescription(header.dwStreamId),
+	    GetStreamAttributesDescription(header.dwStreamAttributes),
 	    header.dwStreamNameSize,
 	    header.Size.HighPart, header.Size.LowPart);
   else
@@ -169,7 +175,7 @@ ReadArchiveHeader(WIN32_STREAM_ID * lpBuf)
 
   do
     {
-      Sleep(0);
+      YieldSingleProcessor();
 
       if (bCancel)
 	return false;
@@ -216,4 +222,38 @@ WriteArchive(LPBYTE lpBuf, DWORD dwSize)
       dwSize -= dwBytesWritten;
       lpBuf += dwBytesWritten;
     }
+}
+
+// This function skips forward in current archive, using current buffer. If
+// cancelled, it returns false, otherwise true.
+inline bool
+SkipArchive(PULARGE_INTEGER BytesToRead)
+{
+  DWORD dwBytesRead;
+
+  while (BytesToRead->QuadPart > 0)
+    {
+      YieldSingleProcessor();
+
+      if (bCancel)
+	return false;
+
+      dwBytesRead = ReadArchive(Buffer,
+				BytesToRead->QuadPart >
+				(DWORDLONG) dwBufferSize ?
+				dwBufferSize : BytesToRead->LowPart);
+
+      BytesToRead->QuadPart -= dwBytesRead;
+
+      if (dwBytesRead == 0)
+	{
+	  if (bVerbose)
+	    fprintf(stderr, ", %.4g %s missing.\r\n",
+		    TO_h(BytesToRead->QuadPart),
+		    TO_p(BytesToRead->QuadPart));
+	  status_exit(XE_ARCHIVE_TRUNC);
+	}
+    }
+
+  return true;
 }

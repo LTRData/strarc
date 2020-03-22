@@ -1,4 +1,4 @@
-/* Stream Archive I/O utility, Copyright (C) Olof Lagerkvist 2004-2008
+/* Stream Archive I/O utility, Copyright (C) Olof Lagerkvist 2004-2013
  *
  * backup.cpp
  * Backup operation source file.
@@ -18,6 +18,8 @@
 #endif
 
 #include <winstrct.h>
+
+#include "sleep.h"
 
 #include <wfind.h>
 
@@ -56,13 +58,11 @@ BackupFile(LPWSTR wczFile, LPCWSTR wczShortName)
       hfree(szFile);
     }
 
-  WIN32_FIND_DATA finddata;
   if (wczShortName == NULL)
     {
-      HANDLE hFind = FindFirstFile(wczFile, &finddata);
-      if (hFind != INVALID_HANDLE_VALUE)
+      WFileFinder finddata(wczFile);
+      if (finddata)
 	{
-	  CloseHandle(hFind);
 	  wczShortName = finddata.cAlternateFileName;
 	  if (wczShortName[0] == 0)
 	    wczShortName = NULL;
@@ -232,7 +232,7 @@ BackupFile(LPWSTR wczFile, LPCWSTR wczShortName)
   LPVOID lpCtx = NULL;
   for (;;)
     {
-      Sleep(0);
+      YieldSingleProcessor();
 
       if (bCancel)
 	{
@@ -295,7 +295,7 @@ BackupDirectory(LPWSTR wczPath)
 
   do
     {
-      Sleep(0);
+      YieldSingleProcessor();
 
       if (bCancel)
 	return;
@@ -321,14 +321,7 @@ BackupDirectory(LPWSTR wczPath)
 	  !(bLocal &&
 	    (finddata.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)))
 	{
-	  if (!BackupFile(wczCurrentPath, finddata.cAlternateFileName))
-	    {
-	      if (bVerbose)
-		oem_printf(stderr, "Skipping directory: '%1!ws!'%%n",
-			   wczCurrentPath);
-
-	      continue;
-	    }
+	  size_t iLen = wcslen(wczPath);
 
 	  wcscat(wczPath, L"\\");
 
@@ -345,6 +338,17 @@ BackupDirectory(LPWSTR wczPath)
 			   wczCurrentPath);
 	      BackupDirectory(wczPath + wcslen(wczPath));
 	    }
+
+	  wczPath[iLen] = 0;
+
+	  if (!BackupFile(wczCurrentPath, finddata.cAlternateFileName))
+	    {
+	      if (bVerbose)
+		oem_printf(stderr, "Skipping directory: '%1!ws!'%%n",
+			   wczCurrentPath);
+
+	      continue;
+	    }
 	}
       else
 	BackupFile(wczCurrentPath, finddata.cAlternateFileName);
@@ -359,7 +363,7 @@ BackupDirectoryTree()
   if (iLen == 0)
     return;
 
-  BackupFile(wczCurrentPath, NULL);
+  size_t iLenOriginalEnd = iLen;
 
   if ((wczCurrentPath[iLen - 1] != L'\\') &
       (wczCurrentPath[iLen - 1] != L':') & (wczCurrentPath[iLen - 1] != L'/'))
@@ -369,4 +373,15 @@ BackupDirectoryTree()
     }
 
   BackupDirectory(wczCurrentPath + iLen);
+
+  wczCurrentPath[iLenOriginalEnd] = 0;
+
+  BackupFile(wczCurrentPath, NULL);
+
+  if ((wczCurrentPath[iLen - 1] != L'\\') &
+      (wczCurrentPath[iLen - 1] != L':') & (wczCurrentPath[iLen - 1] != L'/'))
+    {
+      wczCurrentPath[iLen++] = L'\\';
+      wczCurrentPath[iLen] = 0;
+    }
 }

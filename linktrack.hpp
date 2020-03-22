@@ -49,7 +49,7 @@ MatchLink(DWORD dwVolumeSerialNumber, LONGLONG NodeNumber, LPCWSTR wczName)
   for (LinkInfo * linkinfo = LinkTracker[(NodeNumber & 0xFF0) >> 4];
        linkinfo != NULL; linkinfo = linkinfo->GetNext())
     {
-      Sleep(0);
+      YieldSingleProcessor();
 
       if (linkinfo->Match(dwVolumeSerialNumber, NodeNumber, &wczLinkName))
 	return wczLinkName;
