@@ -1,0 +1,541 @@
+strarc - Stream Archive I/O Utility, a streaming backup/restore tool for
+Windows NT/2000/XP/2003 by Olof Lagerkvist. This documentation is written for
+version 0.1.4, 24 apr 2007, of this tool.
+
+---
+
+Copyright (C) Olof Lagerkvist - 2005-2007.
+Some parts of the source code origins from a former commercial archive tool
+called 'ntarc' that was developed by Olof Lagerkvist 1998-2000. This source is
+now part of the open source of the free archiver 'strarc'.
+
+Permission is hereby granted, free of charge, to any person
+obtaining a copy of this software and associated documentation
+files (the "Software"), to deal in the Software without
+restriction, including without limitation the rights to use,
+copy, modify, merge, publish, distribute, sublicense, and/or
+sell copies of the Software, and to permit persons to whom the
+Software is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice shall be
+included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+OTHER DEALINGS IN THE SOFTWARE.
+
+Olof Lagerkvist
+http://www.ltr-data.se
+olof@ltr-data.se
+
+---
+
+TABLE OF CONTENTS
+
+1. Command line switches and parameters.
+
+1.1 Main options.
+1.2 Backup options.
+1.3 Restore options.
+1.4 Options available both for backup and restore operations.
+1.5 General options, always available.
+1.6 Archive name, paths and filenames.
+
+2. Known bugs and limitations.
+
+2.1 The compression and sparse state of alternate data streams are not backed
+    up/restored.
+2.2 Short 8.3 filenames as alternate names can only be restored on Windows XP,
+    Server 2003 or later.
+2.3 The encryption attribute is not restored.
+
+3. FAQ and howtos
+
+3.1 How to copy a complete directory tree from one NTFS volume to another.
+3.2 How to copy junctions but not the files on the joined filesystem.
+3.3 How to make different kinds of selections of files to backup.
+3.4 How to implement an incremental or differential backup strategy.
+3.5 Archive compression.
+3.6 How to backup a complete running Windows system.
+
+---
+
+1. Command line switches and parameters.
+
+On backup operation:
+strarc -c [-afjr] [-z:CMD] [-m:f|d|i] [-l|v] [-s:ls] [-b:SIZE]
+       [-e:EXCLUDE[,...]] [-i:INCLUDE[,...]] [-d:DIR] [ARCHIVE] [LIST ...]
+
+On restore operation:
+strarc -x [-z:CMD] [-8] [-l|v] [-s:aclst] [-o[:afn]] [-b:SIZE]
+       [-e:EXCLUDE[,...]] [-i:INCLUDE[,...]] [-d:DIR] [ARCHIVE]
+
+On archive test/listing operation:
+strarc -t [-z:CMD] [-v] [-b:SIZE] [-e:EXCLUDE[,...]] [-i:INCLUDE[,...]]
+       [ARCHIVE]
+
+1.1 Main options.
+
+-c     Backup operation. Default archive output is stdout. If an archive
+       filename is given, that file is overwritten if not the -a switch is
+       also specified.
+
+-x     Restore operation. Default archive input is stdin.
+
+-t     Read archive and display filenames and possible errors but no
+       extracting. Default archive input is stdin.
+
+1.2 Backup options.
+
+-a     Append to existing archive.
+
+-f     Read files to backup from stdin. If this flag is not present the tree
+       of the current directory (or directory specified with -d) is backed up
+       including all files and subdirectories in it. The -e and -i switches
+       are compatible with -f so that you can filter out which files from the
+       list read from stdin should be backed up. The filenames read from
+       stdin are assumed to be Ansi characters if -f is given, or Unicode
+       characters if -F is given. You may get better performance with the -F
+       switch than with the -f switch.
+
+-j     Do not follow junctions or other reparse points, instead the reparse
+       points are backed up. Section 3.2 contains additional notes about the
+       differences between running strarc with or without the -j switch.
+
+-m     Select backup method.
+
+       f - Full. All files and directories are backed up and any archive
+           attributes are cleared on the backed up files.
+
+       d - Differential. All files and directories with their archive
+           attributes set are backed up but the archive attributes are not
+           cleared. This effectively means to backup everything changed since
+           the last full or incremental backup.
+
+       i - Incremental. All files and directories with their archive
+           attributes set are backed up and the archive attributes are
+           cleared on the backed up files. This effectively means to backup
+           all files changed since the last full or incremental backup.
+
+       If one of the -m options is specified any archive attributes are not
+       stored in the archive.
+
+-r     Backup loaded registry database of the running system.
+
+       Creates temporary snapshot files of loaded registry database files and
+       stores them in the backup archive. This is recommended when creating a
+       complete backup of the system drive on a running system. When the backup
+       archive is restored to a new drive, the backed up snapshots will be
+       extracted to the locations where Windows expects the registry database
+       files. See section 3.6 for more information.
+
+1.3 Restore options.
+
+-o     Overwrite existing files.
+
+-o:a   Overwrite existing files without archive attribute set. This is
+       recommended when restoring from incremental backup sets so that files
+       restored from the full backup can be overwritten by later versions
+       incremental backup archives without overwriting files changed on disk
+       since the last backup job.
+
+-o:n   Overwrite existing files only when files in the archive are newer.
+
+-o:an  Logical 'and' combination of the above so that only files older and
+       without archive attributes are overwritten.
+
+-o:f   Only extract files that already exists on disk and is newer in the
+       archive (freshen existing files only).
+
+-o:af  Logical 'and' combination of -o:a and -o:f so that only files existing
+       on disk without archive attribute and older than corresponding files in
+       the archive are overwritten.
+
+-8     Create restored files using their saved 8.3 compatibility name. This
+       is ignored for directories.
+
+1.4 Options available both for backup and restore operations.
+
+-b     Specifies the buffer size used when calling the backup API functions.
+       You can suffix the number with K or M to specify KB or MB. The default
+       value is 512 KB or the value in bytes specified at compile time using
+       the DEFAULT_STREAM_BUFFER_SIZE macro. The size must be at least 64 KB.
+
+-d     Before doing anything, change to this directory. When extracting,
+       the directory is first created if it does not exist.
+
+-l     Display filenames like -t while backing up/extracting.
+
+-s     Ignore (skip restoring) information while backing up/restoring:
+
+       a - No file attributes restored.
+
+       c - Skip restoring the 'compressed' and 'sparse' attributes on extracted
+           files.
+
+       l - On backup: No hard link tracking, archive all links as separate
+           files.
+           On restore: Create separate files when extracting hard linked
+           files instead of first attempt to restore the hard link between
+           them.
+
+       s - No security (access/owner/audit) information backed up/restored.
+
+       t - No file creation/last access/last written times restored.
+
+1.5 General options, always available.
+
+-e     Exclude paths and files matching any string in the list.
+
+-i     Include only paths and files matching any string in the list.
+       Default is to include all files and directories. -e takes
+       presedence over -i.
+
+-v     Verbose debug mode to stderr. Useful to find out how strarc
+       handles different errors in filesystems and archives.
+
+-z     Filter archive I/O through an external program such as a compression
+       utility.
+
+1.6 Archive name, paths and filenames.
+
+ARCHIVE   Name of the archive file, stdin/stdout is default. To specify
+          stdout as output when you also specify a LIST, specify - or "" as
+          archive name.
+
+LIST      List of files and directories to archive. If not given, the current
+          directory is archived.
+
+===
+
+2. Known bugs and limitations.
+
+---
+
+2.1 The compression and sparse state of alternate data streams are not backed
+    up/restored.
+
+When backing up files from NTFS volumes the compression and sparse attributes are
+stored in the archive. Unless the -s:c switch is used at extraction the
+compression attribute will be restored by compressing/decompressing or setting
+the sparse state on the file after extraction. However, if a file has any
+alternate data streams, the compression or sparse states of the alternate data
+streams are not backed up. This is mainly due to a limitation in the archive
+file format in combination with how file attributes are stored (before the
+actual backup stream). To solve this problem the backup routine would need to
+analyze the data stream from the BackupRead() API to find alternate data streams
+and store a separate stream header with the compression attribute for that
+stream.
+
+The same limitation applies to the Windows compact.exe tool or the compressing
+files from Windows Explorer, even if you select to compress a complete
+directory any alternate data streams in files in the directory will not be
+compressed.
+
+---
+
+2.2 Short 8.3 filenames as alternate names can only be restored on Windows XP,
+    Server 2003 or later.
+
+When backing up files with long file names or other names incompatible with
+DOS 8.3 naming convensions any alternate 8.3 name returned by the filesystem is
+stored in the archive. However, on Windows versions prior to Windows XP or
+Windows Server 2003 there was no clear and easy way of setting short names on
+files so when extracting an archive any alternate short names will not be
+restored on older Windows versions.
+
+---
+
+2.3 The encryption attribute is not restored.
+
+This tool does not encrypt files in archives even if they were encrypted on the
+disk. Neither are files re-encrypted when restored.
+
+===
+
+3. FAQ and howtos
+
+---
+
+3.1 How to copy a complete directory tree from one NTFS volume to another.
+
+strarc may be used to copy a complete directory tree from one NTFS volume to
+another, including all special attributes of NTFS such as security information,
+permissions, ownership, auditing settings etc.
+
+Say you have a directory called C:\dir and you want to copy it to D:\dirbk.
+Because strarc as default archives to stdout and extracts from stdin you can
+type as follows:
+
+  strarc -cd:C:\dir | strarc -xd:D:\dirbk
+
+The -d switch ensures that backup/restore operation starts in the directories
+you want. If the extraction directory specified cannot be created no files are
+extracted.
+
+If you want file listing to stdout during the progress you can add the -l
+switch:
+
+  strarc -cd:C:\dir | strarc -xld:D:\dirbk
+
+If you don't want to copy security information but everything else add the 's'
+parameter to the -s switch like:
+
+  strarc -c -s:s -d:C:\dir | strarc -xd:D:\dirbk
+
+---
+
+3.2 How to copy junctions but not the files on the joined filesystem.
+
+NTFS in Windows 2000 and later has an option to create "reparse points" of
+empty directories. The implementation involves a "reparse data block" which
+specifies which filesystem filter should handle the reparse point and some
+parameters to the filter about what the specific reparse point should do.
+Windows 2000 natively supports e.g. "junction" and "remote storage" type
+reparse points. The "junction" type is actually a link to another native path,
+very much like a symbolic link to a directory path on Unix filesystems. Volume
+mount point directories use this method to make the mount point directory
+actually redirect to the target filesystem.
+
+When backing up a filesystem with reparse point you have two options. Without
+special switches strarc follows the reparse points as a normal application
+would do. That could be what you want in many cases, but if the directory tree
+you are archiving have e.g. junctions pointing to directories above the
+junction in the tree (making an infinitely deep directory tree) or junctions
+pointing to other filesystems etc you may want to backup the reparse points
+themselves instead of the directories they are pointing to. To select the
+second method, use the -j switch to strarc.
+
+Example:
+
+  strarc -cjd:C:\dir | strarc -xd:D:\dirbk
+
+This will clone the C:\dir directory tree to D:\dirbk but will not follow
+junctions in the C:\dir directory tree but instead clone the junction itself to
+the D:\dirbk location. Example: If there is a volume mount point C:\dir\mnt
+then a new junction D:\dirbk\mnt will be created to point to the same volume,
+the contents of the target volume of the mount point will not be copied.
+
+---
+
+3.3 How to make different kinds of selections of files to backup.
+
+There are many ways to select files and directories to backup. The main
+selection is either done by specifying files and directories on the command
+line. This way all directories specified on the command line will be backed up
+including all their contents. The other way is to let strarc read names of
+individual files to backup from stdin. This way you can e.g. use external
+applications such as dir or GNU find and optionally select with grep, sed etc
+to make the actual selection and pipe the file list output to strarc.
+
+That was the main file selection methods. You may then do a simple string
+filtering using the strarc command line using the -i or -e switches. Any path
+or filename that includes a string listed by the -e switch will not be archived
+and if the -i switch is specified only files and paths including any of the
+strings listed by -i switch is archived, unless it also matches a -e filter.
+
+---
+
+3.4 How to implement an incremental or differential backup strategy.
+
+3.4.1 Introduction - Different types of backup selections.
+
+First, we always need at least one "full backup".
+
+This backup method includes all files. It is very time and space consuming to
+do a full backup every day if only a small number of files are chaged every
+day. At least one full backup is required to start a backup set.
+
+Then, to save time and space, we may do "differential" or "incremental"
+backups, or even both.
+
+Differential backups includes all files changed since the last full backup.
+This means that to completely restore from a differential backup you first need
+to restore the last full backup and then restore the differential backup. With
+strarc you need to use the -o or -o:n options when restoring the differential
+backup so that files restored from the full backup could be correctly
+overwritten with their newer versions.
+
+A disadvantage with differential backups is that they include everything
+changed since the last full backup so if mostly different files are changed
+every day, a differential backup on daily basis may backup lots of unnecessary
+files because the same version of the file may have been backed up the day
+before. Incremental backups includes all files changed since the last full,
+differential or incremental backup. The are often very fast to backup but takes
+a long time to restore because you need the last full backup and all
+incremental backups from up to the date you want to restore.
+
+3.4.2 Case examples.
+
+3.4.2.1 Example situation 1 - Differential backup.
+
+In this example we create a backup strategy where we do a full backup on
+fridays and differential backups on monday-thursdays. In the example we have a
+directory called C:\Docs and a backup harddrive with the drive letter D:.
+
+First, we create a batch file called C:\backup_friday.cmd that we schedule to
+run in friday nights. The batchfile contents may be like the following:
+
+  echo Backup %DATE% %TIME%> D:\backup_friday_list.txt
+  echo Backup %DATE% %TIME%> D:\backup_friday_errors.txt
+  strarc -cl -m:f -d:C:\ D:\backup_friday.sa Docs > D:\backup_friday_list.txt 2> D:\backup_friday_errors.txt
+  type nul > D:\backup_weekdays.sa
+
+This will first change to the C:\ directory and there backup Docs directory and
+all files and subdirectories of it. This means that all paths in the archive
+will begin with Docs\. The archive file is called D:\backup_friday.sa and is
+overwritten each time this batchfile is run. A list of all backed up files is
+written to D:\backup_friday_list.txt and a list of any error messages is
+written to D:\backup_friday_errors.txt. The last line ensures that the archive
+from the last differential backup is cleared so that a restore operation will
+not restore files from that archive.
+
+Then we create a batch file called C:\backup_weekdays.cmd that we schedule to
+run every monday-thursday nights. The batchfile contents may be like this:
+
+  echo Backup %DATE% %TIME%> D:\backup_weekday_list.txt
+  echo Backup %DATE% %TIME%> D:\backup_weekday_errors.txt
+  strarc -cl -m:d -d:C:\ D:\backup_weekday.sa Docs > D:\backup_weekday_list.txt 2> D:\backup_weekday_errors.txt
+
+This will first change to the C:\ directory and there backup Docs directory and
+all files and subdirectories of it that has their archive attribute set.
+Because the archive attributes were cleared by the last full backup and are
+only set again by the OS when files are changed this will effectively cause all
+files and directories changed since the last full backup to be archived, in
+this case to an archive called D:\backup_weekday.sa, which is overwritten each
+time this batch file is run. In a way similar to the full backup, a file list
+and an error list are saved in two text files.
+
+Now, to restore C:\Docs we need both D:\backup_friday.sa and
+D:\backup_weekday.sa. A restore command line would look like the following:
+
+  cat D:\backup_friday.sa D:\backup_weekday.sa | strarc -xlo:a -d:C:\
+
+(The cat utility is from the UnxUtils package mentioned above.)
+
+The cat program first reads D:\backup_friday.sa and then D:\backup_weekday.sa
+and writes them through a pipe to strarc. The strarc program changes to the C:\
+directory and then extracts files from the two archives piped from cat. This
+will first restore all files in the D:\backup_friday.sa archive and then
+restore from D:\backup_weekday.sa and the -o:a switch causes any files archived
+in D:\backup_weekday.sa to overwrite files formerly extracted from
+D:\backup_friday.sa unless they are not changed on disk since the last backup.
+
+3.4.2.2 Example situation 2 - Incremental backup.
+
+In this example we create a backup strategy where we do a full backup on
+fridays and incremental backups on monday-thursdays. In the example we have a
+directory called C:\Docs and a backup harddrive with the drive letter D:.
+
+First, we create a batch file called C:\backup_friday.cmd that we schedule to
+run in friday nights. The batchfile contents may be like the following:
+
+  echo Backup %DATE% %TIME%> D:\backup_friday_list.txt
+  echo Backup %DATE% %TIME%> D:\backup_friday_errors.txt
+  strarc -cl -m:f -d:C:\ D:\backup_friday.sa Docs > D:\backup_friday_list.txt 2> D:\backup_friday_errors.txt
+  type nul > D:\backup_weekdays.sa
+  del D:\backup_weekday_list.txt D:\backup_weekday_errors.txt
+
+This will first change to the C:\ directory and there backup Docs directory and
+all files and subdirectories of it. This means that all paths in the archive
+will begin with Docs\. The archive file is called D:\backup_friday.sa and is
+overwritten each time this batchfile is run. A list of all backed up files is
+written to D:\backup_friday_list.txt and a list of any error messages is
+written to D:\backup_friday_errors.txt. The last line ensures that the archive
+from this week's incremental backups is cleared so that following incremental
+backups will not append to an old archive and that a restore operation will
+not restore files from an archive older than this friday full backup.
+
+Then we create a batch file called C:\backup_weekdays.cmd that we schedule to
+run every monday-thursday nights. The batchfile contents may be like this:
+
+  echo Backup %DATE% %TIME%>> D:\backup_weekday_list.txt
+  echo Backup %DATE% %TIME%>> D:\backup_weekday_errors.txt
+  strarc -cal -m:i -d:C:\ D:\backup_weekday.sa Docs >> D:\backup_weekday_list.txt 2>> D:\backup_weekday_errors.txt
+
+This will first change to the C:\ directory and there backup Docs directory and
+all files and subdirectories of it that has their archive attribute set.
+Because the archive attributes were cleared by the last full backup and the
+last incremental backup and are only set again by the OS when files are changed
+this will effectively cause all files and directories changed since the last
+full or incremental backup to be archived, in this case appending to an archive
+called D:\backup_weekday.sa. In a way similar to the full backup, a file list
+and an error list are saved in two text files.
+
+Now, to restore C:\Docs we need D:\backup_friday.sa which contains a complete
+backup from the last friday full backup and the D:\backup_weekday.sa which
+contains all incremental backups since the last friday full backup. A restore
+command line would look like the following:
+
+  cat D:\backup_friday.sa D:\backup_weekday.sa | strarc -xlo:a -d:C:\
+
+(The cat utility is from the UnxUtils package mentioned above.)
+
+The cat program first reads D:\backup_friday.sa and then D:\backup_weekday.sa
+and writes them through a pipe to strarc. The strarc program changes to the C:\
+directory and then extracts files from the two archives piped from cat. This
+will first restore all files in the D:\backup_friday.sa archive and then
+restore from each incremental backup in D:\backup_weekday.sa and the -o:a
+switch causes any files newer in the incremental backups to overwrite files
+extracted from the full backup or from earlier incremental backups, unless they
+are changed on disk since the last backup.
+
+---
+
+3.5 Archive compression.
+
+The strarc program does not natively support compression of the archive it
+creates or restores files from. However, because it by default uses stdin and
+stdout as archive it is easy to use pipes to stream compression utilities such
+as gzip och bzip2. Example:
+
+strarc -cd:C:\ | bzip2 > D:\backup.sa.bz2
+
+This will backup all of C: drive to a bzip2 compressed strarc archive at the D:
+drive. To restore from such an archive, use bzcat the opposit way:
+
+bzcat D:\backup.sa.bz2 | strarc -xd:C:\
+
+This will extract all files from the bzip2 compressed strarc archive at the D:
+drive back to the C: drive.
+
+---
+
+3.6 How to backup a complete running Windows system.
+
+Complete running Windows systems may be backed up in the ways described in the
+3.4 section. Special care must however be taken when it comes to files that may
+be open while the backup is running. This is always the case of the registry
+database files in the %SystemRoot%\System32\config directory and the profile
+directories of logged on users. This means that strarc cannot backup the
+registry database files the way normal files are backed up while the system is
+running.
+
+With release 0.1.3 of strarc it is now possible to backup snapshots of the
+registry database files using the -r switch to strarc.
+
+The snapshot files are extracted from the registry keys of the running system
+before the actual backup routine of strarc begins and will therefore be a
+momentary copy of the contents of the registry when strarc starts. The snapshot
+files are temporary files created with the same name as the loaded registry
+files with the special extension '.$sards', "Stream Archiver Registry Database
+Snapshot". When the backup routine later in the strarc backup run finds the
+snapshot files they are stored in the backup archive with the name of the actual
+loaded registry file, not the name of the temporary snapshot file. This way a
+later restore of the backup archive will recreate the snapshots with the name
+and path of registry database files Windows expects to find.
+
+The temporary snapshot files with the special extension '.$sards' are deleted
+automatically by the backup routine after they have been stored in the backup
+archive. However, if the backup operation is cancelled before the snapshot files
+are backed up or if a directory with some of the snapshots are not included in
+the backup run, the snapshot files will be left on the disk. You can safely
+delete them after a strarc backup operation is complete.
+
+===
