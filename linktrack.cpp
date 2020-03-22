@@ -17,7 +17,9 @@
 #include "strarc.hpp"
 #include "linktrack.hpp"
 
+#ifndef _WIN64
 #pragma comment(lib, "crthlp.lib")
 #pragma comment(lib, "crtdll.lib")
+#endif
 
 LinkInfo *LinkTracker[256] = { 0 };

@@ -1,4 +1,4 @@
-/* Stream Archive I/O utility, Copyright (C) Olof Lagerkvist 2004-2008
+/* Stream Archive I/O utility, Copyright (C) Olof Lagerkvist 2004-2009
  *
  * strarc.cpp
  * Main source file. This contains the startup wmain() function, command line
@@ -32,14 +32,20 @@
 
 // Link the .exe file to CRTDLL.DLL. This makes it run without additional DLL
 // files even on very old versions of Windows NT.
-#pragma comment(lib, "crthlp.lib")
+#ifdef _WIN64
+#pragma comment(lib, "msvcrt.lib")
+#else
+// crthlp.lib is only needed when x86 version is built with 14.00 and later
+// versions of MSVC++ compiler
+//#pragma comment(lib, "crthlp.lib")
 #pragma comment(lib, "crtdll.lib")
+// The WinStructured lib files are usually marked for linking with msvcrt.lib.
+#pragma comment(linker, "/nodefaultlib:msvcrt.lib")
+#endif
+
 #pragma comment(lib, "shell32.lib")
 #pragma comment(lib, "advapi32.lib")
 #pragma comment(lib, "ntdll.lib")
-
-// The WinStructured lib files are usually marked for linking with msvcrt.lib.
-#pragma comment(linker, "/nodefaultlib:msvcrt.lib")
 
 // This is the backup stream buffer size used in API calls. See description of
 // the -b command line switch for details.
@@ -91,18 +97,22 @@ void
 usage()
 {
   fprintf(stderr,
-	  "Backup Stream archive I/O Utility, version 0.1.4\r\n"
+	  "Backup Stream archive I/O Utility, version 0.1.5\r\n"
 	  "Build date: " __DATE__
-	  ", Copyright (C) Olof Lagerkvist 2004-2008\r\n"
+	  ", Copyright (C) Olof Lagerkvist 2004-2009\r\n"
 	  "http://www.ltr-data.se      olof@ltr-data.se\r\n"
 	  "\n"
 	  "Usage:\r\n"
+	  "\n"
 	  "strarc -c[afj] [-z:CMD] [-m:f|d|i] [-l|v] [-s:ls] [-b:SIZE] [-e:EXCLUDE[,...]]\r\n"
 	  "       [-i:INCLUDE[,...]] [-d:DIR] [ARCHIVE] [LIST ...]\r\n"
+	  "\n"
 	  "strarc -x [-8] [-z:CMD] [-l|v] [-s:aclst] [-o[:afn]] [-b:SIZE]\r\n"
 	  "       [-e:EXCLUDE[,...]] [-i:INCLUDE[,...]] [-d:DIR] [ARCHIVE]\r\n"
+	  "\n"
 	  "strarc -t [-z:CMD] [-v] [-b:SIZE] [-e:EXCLUDE[,...]] [-i:INCLUDE[,...]]\r\n"
-	  "       [ARCHIVE]\r\n" "\n" "-- Main options --\r\n" "\n"
+	  "       [ARCHIVE]\r\n" "\n" "-- Main options --\r\n"
+	  "\n"
 	  "-c     Backup operation. Default archive output is stdout. If an archive\r\n"
 	  "       filename is given, that file is overwritten if not the -a switch is also\r\n"
 	  "       specified.\r\n" "\n"
@@ -199,8 +209,8 @@ usage()
 	  "important limitation notes when used as a backup application, how-tos, FAQ and\r\n"
 	  "usage examples, please read the file strarc.txt following this program file or\r\n"
 	  "download strarc.zip from http://www.ltr-data.se/opencode.html where the latest\r\n"
-	  "version should be available.\r\n", _h(DEFAULT_STREAM_BUFFER_SIZE),
-	  _p(DEFAULT_STREAM_BUFFER_SIZE));
+	  "version should be available.\r\n", TO_h(DEFAULT_STREAM_BUFFER_SIZE),
+	  TO_p(DEFAULT_STREAM_BUFFER_SIZE));
 
   exit(1);
 }
@@ -358,7 +368,7 @@ ExcludedString(LPCWSTR wczPath)
 
       do
 	{
-	  DWORD dwExclStrLen = wcslen(wczExcludeString);
+	  DWORD_PTR dwExclStrLen = wcslen(wczExcludeString);
 
 	  for (LPCWSTR wczPathPtr = wczPath;
 	       (DWORD) (wczPathEnd - wczPathPtr) >= dwExclStrLen;
@@ -389,7 +399,7 @@ ExcludedString(LPCWSTR wczPath)
 
   do
     {
-      DWORD dwInclStrLen = wcslen(wczIncludeString);
+      DWORD_PTR dwInclStrLen = wcslen(wczIncludeString);
 
       for (LPCWSTR wczPathPtr = wczPath;
 	   (DWORD) (wczPathEnd - wczPathPtr) >= dwInclStrLen; wczPathPtr++)
@@ -453,6 +463,7 @@ CreateDirectoryPath(LPCWSTR wczPath)
 }
 
 int
+__cdecl
 wmain(int argc, LPWSTR *argv)
 {
   LPWSTR wczStartDir = NULL;
@@ -719,8 +730,8 @@ wmain(int argc, LPWSTR *argv)
 
   if (dwArchiveCreation == OPEN_ALWAYS)
     SetFilePointer(hArchive, 0, 0, FILE_END);
-
-  SetEndOfFile(hArchive);
+  else
+    SetEndOfFile(hArchive);
 
   // If we should filter through a compression utility.
   PROCESS_INFORMATION piFilter = { 0 };
@@ -821,7 +832,7 @@ wmain(int argc, LPWSTR *argv)
 	    continue;
 	  }
 
-	int iLen = wcslen(wczCurrentPath);
+	size_t iLen = wcslen(wczCurrentPath);
 	if (iLen == 0)
 	  continue;
 
@@ -922,7 +933,7 @@ wmain(int argc, LPWSTR *argv)
 	      break;
 	    }
 
-	  int iLen = strlen(czFile);
+	  size_t iLen = strlen(czFile);
 	  if (iLen == 0)
 	    break;
 
@@ -930,7 +941,7 @@ wmain(int argc, LPWSTR *argv)
 	    continue;
 
 	  czFile[iLen - 1] = 0;
-	  MultiByteToWideChar(CP_ACP, 0, czFile, iLen, wczFile,
+	  MultiByteToWideChar(CP_ACP, 0, czFile, (int) iLen, wczFile,
 			      sizeof(wczFile) / sizeof(*wczFile));
 
 	  BackupFile(wczFile, NULL);

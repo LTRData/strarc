@@ -23,8 +23,12 @@
 
 #include "strarc.hpp"
 
+#ifdef _WIN64
+#pragma comment(lib, "msvcrt.lib")
+#else
 #pragma comment(lib, "crthlp.lib")
 #pragma comment(lib, "crtdll.lib")
+#endif
 #pragma comment(lib, "ntdll.lib")
 
 void
@@ -49,9 +53,8 @@ CreateRegistrySnapshots()
   LPWSTR wczKeyName = (LPWSTR) Buffer;
   DWORD dwKeyNameSize = 32767;
   LPWSTR wczFileName = wczFullPathBuffer;
-  DWORD dwFileNameSize = 32767 -
-    sizeof(wczFullPathBuffer) / sizeof(*wczFullPathBuffer);
-
+  DWORD dwFileNameSize =
+    sizeof(wczFullPathBuffer) - sizeof(*wczFullPathBuffer);
   DWORD dwIndex = 0;
 
   for(;;)
@@ -60,8 +63,7 @@ CreateRegistrySnapshots()
 
       DWORD dwKeyNameReturnedSize = dwKeyNameSize;
       DWORD dwFileNameReturnedSize = dwFileNameSize -
-	sizeof(REGISTRY_SNAPSHOT_FILE_EXTENSION) /
-	sizeof(*REGISTRY_SNAPSHOT_FILE_EXTENSION);
+	sizeof(REGISTRY_SNAPSHOT_FILE_EXTENSION);
       DWORD dwReturnedDataType;
 
       lRegErr = RegEnumValue(hKeyHiveList,

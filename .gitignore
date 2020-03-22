@@ -355,3 +355,5 @@ MigrationBackup/
 *.exe
 *.dll
 *.GID
+*.err
+todo.txt

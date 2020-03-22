@@ -24,8 +24,10 @@
 #include "strarc.hpp"
 #include "linktrack.hpp"
 
+#ifndef _WIN64
 #pragma comment(lib, "crthlp.lib")
 #pragma comment(lib, "crtdll.lib")
+#endif
 
 // This function backs up an object (file or directory) to the archive stream.
 
@@ -160,7 +162,7 @@ BackupFile(LPWSTR wczFile, LPCWSTR wczShortName)
   header.Size.QuadPart = sizeof BY_HANDLE_FILE_INFORMATION;
   if (wczShortName != NULL)
     header.Size.QuadPart += 26;
-  header.dwStreamNameSize = wcslen(wczFile) << 1;
+  header.dwStreamNameSize = (DWORD) wcslen(wczFile) << 1;
   wcsncpy(header.cStreamName, wczFile, header.dwStreamNameSize >> 1);
   BY_HANDLE_FILE_INFORMATION *FileInfo = (BY_HANDLE_FILE_INFORMATION *)
     (Buffer + HEADER_SIZE + header.dwStreamNameSize);
@@ -353,7 +355,7 @@ BackupDirectory(LPWSTR wczPath)
 void
 BackupDirectoryTree()
 {
-  int iLen = wcslen(wczCurrentPath);
+  size_t iLen = wcslen(wczCurrentPath);
   if (iLen == 0)
     return;
 

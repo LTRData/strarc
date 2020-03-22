@@ -10,6 +10,9 @@
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
+#ifndef _WIN32_WINNT
+#define _WIN32_WINNT 0x500
+#endif
 
 #include <winstrct.h>
 #include <winioctl.h>
@@ -18,8 +21,10 @@
 #include "strarc.hpp"
 #include "lnk.h"
 
+#ifndef _WIN64
 #pragma comment(lib, "crthlp.lib")
 #pragma comment(lib, "crtdll.lib")
+#endif
 
 /* wczFile - Name of file to restore with relative path.
  * FileInfo - Structure with file attributes and file times to restore.
@@ -502,7 +507,8 @@ RestoreFile(LPCWSTR wczFile, const BY_HANDLE_FILE_INFORMATION * FileInfo,
 	    {
 	      if (bVerbose)
 		fprintf(stderr, ", %.4g %s missing.\r\n",
-			_h(BytesToRead.QuadPart), _p(BytesToRead.QuadPart));
+			TO_h(BytesToRead.QuadPart),
+			TO_p(BytesToRead.QuadPart));
 	      status_exit(XE_ARCHIVE_TRUNC);
 	    }
 

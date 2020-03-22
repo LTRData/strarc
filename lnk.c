@@ -10,15 +10,19 @@
 
 #include "lnk.h"
 
+#ifdef _WIN64
+#pragma comment(lib, "msvcrt.lib")
+#else
 #pragma comment(lib, "crthlp.lib")
 #pragma comment(lib, "crtdll.lib")
+#endif
 #pragma comment(lib, "ntdll.lib")
 
 BOOL
 SetShortFileName(HANDLE hFile, LPCWSTR lpName)
 {
   PFILE_NAME_INFORMATION FileNameData;
-  DWORD dwLength = wcslen(lpName) * sizeof *lpName;
+  DWORD dwLength = (DWORD) wcslen(lpName) * sizeof *lpName;
   NTSTATUS Status;
   IO_STATUS_BLOCK IoStatusBlock;
 
