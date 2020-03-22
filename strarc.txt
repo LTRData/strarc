@@ -1,12 +1,12 @@
 strarc - Stream Archive I/O Utility, a streaming backup/restore tool for
 Windows NT/2000/XP/2003 by Olof Lagerkvist. This documentation is written for
-version 0.2.0, 19 March 2013, of this tool.
+version 0.3.0g, 26 March 2015, of this tool.
 
-This document was last updated 19 March 2013.
+This document was last updated 26 March 2015.
 
 ---
 
-Copyright (C) Olof Lagerkvist - 2004 - 2013.
+Copyright (C) Olof Lagerkvist - 2004 - 2015.
 Some parts of the source code origins from a former commercial archive tool
 called 'ntarc' that was developed by Olof Lagerkvist 1998-2000. This source is
 now part of the open source of the free archiver 'strarc'.
@@ -74,11 +74,11 @@ TABLE OF CONTENTS
 1. Command line switches and parameters.
 
 On backup operation:
-strarc -c [-afjnr] [-z:CMD] [-m:f|d|i] [-l|v] [-s:ls] [-b:SIZE]
+strarc -c [-afjnr] [-z:CMD] [-m:f|d|i] [-l|v] [-s:ls8] [-b:SIZE]
        [-e:EXCLUDE[,...]] [-i:INCLUDE[,...]] [-d:DIR] [ARCHIVE] [LIST ...]
 
 On restore operation:
-strarc -x [-z:CMD] [-8] [-l|v] [-s:aclst] [-o[:afn]] [-b:SIZE]
+strarc -x [-z:CMD] [-8] [-l|v] [-s:aclst8] [-o[:afn]] [-b:SIZE] [-w:8]
        [-e:EXCLUDE[,...]] [-i:INCLUDE[,...]] [-d:DIR] [ARCHIVE]
 
 On archive test/listing operation:
@@ -168,6 +168,8 @@ strarc -t [-z:CMD] [-v] [-b:SIZE] [-e:EXCLUDE[,...]] [-i:INCLUDE[,...]]
 -8     Create restored files using their saved 8.3 compatibility name. This
        is ignored for directories.
 
+-w:8   Do not display any warnings when short 8.3 names cannot be restored.
+
 1.4 Options available both for backup and restore operations.
 
 -b     Specifies the buffer size used when calling the backup API functions.
@@ -197,13 +199,18 @@ strarc -t [-z:CMD] [-v] [-b:SIZE] [-e:EXCLUDE[,...]] [-i:INCLUDE[,...]]
 
        t - No file creation/last access/last written times restored.
 
+       8 - Skip storing short 8.3 names in archive on backup, or skip restoring
+           such names on restore.
+
 1.5 General options, always available.
 
--e     Exclude paths and files matching any string in the list.
+-e     Exclude paths and files where any part of the relative path matches any
+       string in specified comma-separated list.
 
--i     Include only paths and files matching any string in the list.
-       Default is to include all files and directories. -e takes
-       presedence over -i.
+-i     Include only paths and files where any part of the relative path matches
+       any string in specified comma-separated list.
+       Default is to include all files and directories. -e takes presedence
+       over -i.
 
 -v     Verbose debug mode to stderr. Useful to find out how strarc
        handles different errors in filesystems and archives.

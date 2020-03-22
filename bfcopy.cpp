@@ -1,8 +1,8 @@
-/* Stream Archive I/O utility, Copyright (C) Olof Lagerkvist 2004-2013
- *
- * bfcopy.cpp
- * Backup based copy file feature.
- */
+/* Stream Archive I/O utility, Copyright (C) Olof Lagerkvist 2004-2016
+*
+* bfcopy.cpp
+* Backup based copy file feature.
+*/
 
 #ifndef _UNICODE
 #define _UNICODE
@@ -17,157 +17,161 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 
+#define WIN32_NO_STATUS
 #include <process.h>
-
 #include <windows.h>
-#include <ntdll.h>
 #include <intsafe.h>
+
+#undef WIN32_NO_STATUS
+#include <ntdll.h>
 #include <winstrct.h>
+#include <wio.h>
 
 #include "strarc.hpp"
 
-class FileCopyContext
+class StrArc::FileCopyContext
 {
-  StrArc *SourceReadSession;
-  StrArc *TargetWriteSession;
+    StrArc *SourceReadSession;
+    StrArc *TargetWriteSession;
 
-  PUNICODE_STRING SourceName;
-  HANDLE SourceHandle;
+    PUNICODE_STRING SourceName;
+    HANDLE SourceHandle;
 
-  HANDLE SourceReadThreadHandle;
+    HANDLE SourceReadThreadHandle;
 
-  PUNICODE_STRING TargetName;
-  HANDLE TargetHandle;
+    PUNICODE_STRING TargetName;
+    HANDLE TargetHandle;
 
-  static
-  unsigned
-  CALLBACK
-  SourceReadThread(void *lpCtx)
-  {
-    FileCopyContext *Context = (FileCopyContext *)lpCtx;
+    static
+        unsigned
+        CALLBACK
+        SourceReadThread(void *lpCtx)
+    {
+        FileCopyContext *Context = (FileCopyContext *)lpCtx;
 
-    DWORD dwResult = NO_ERROR;
-    if (!Context->SourceReadSession->
-	ReadFileStreamsToArchive(Context->SourceName,
-				 Context->SourceHandle))
-      dwResult = GetLastError();
+        DWORD dwResult = NO_ERROR;
+        if (!Context->SourceReadSession->
+            ReadFileStreamsToArchive(Context->SourceName,
+                Context->SourceHandle))
+            dwResult = GetLastError();
 
-    delete Context->SourceReadSession;
-    Context->SourceReadSession = NULL;
+        delete Context->SourceReadSession;
+        Context->SourceReadSession = NULL;
 
-    return dwResult;
-  }
+        return dwResult;
+    }
 
 public:
 
-  StrArc *GetSourceReadSession()
-  {
-    return SourceReadSession;
-  }
+    StrArc *GetSourceReadSession()
+    {
+        return SourceReadSession;
+    }
 
-  StrArc *GetTargetWriteSession()
-  {
-    return TargetWriteSession;
-  }
+    StrArc *GetTargetWriteSession()
+    {
+        return TargetWriteSession;
+    }
 
-  bool
-  GetSourceReadThreadResult(DWORD dwMilliseconds = INFINITE)
-  {
-    WaitForSingleObject(SourceReadThreadHandle, dwMilliseconds);
+    bool
+        GetSourceReadThreadResult(DWORD dwMilliseconds = INFINITE)
+    {
+        WaitForSingleObject(SourceReadThreadHandle, dwMilliseconds);
 
-    DWORD dwExitCode;
-    if (!GetExitCodeThread(SourceReadThreadHandle, &dwExitCode))
-      dwExitCode = GetLastError();
+        DWORD dwExitCode;
+        if (!GetExitCodeThread(SourceReadThreadHandle, &dwExitCode))
+            dwExitCode = GetLastError();
 
-    CloseHandle(SourceReadThreadHandle);
+        CloseHandle(SourceReadThreadHandle);
 
-    if (dwExitCode == NO_ERROR)
-      return true;
+        if (dwExitCode == NO_ERROR)
+            return true;
 
-    SetLastError(dwExitCode);
-    return false;
-  }
+        SetLastError(dwExitCode);
+        return false;
+    }
 
-  bool
-  StartSourceReadThread()
-  {
-    unsigned uiThreadId;
-    SourceReadThreadHandle = (HANDLE)
-      _beginthreadex(NULL, 0, SourceReadThread, this, 0, &uiThreadId);
+    bool
+        StartSourceReadThread()
+    {
+        unsigned uiThreadId;
 
-    return SourceReadThreadHandle != INVALID_HANDLE_VALUE;
-  }
+        SourceReadThreadHandle = (HANDLE)
+            _beginthreadex(NULL, 0, SourceReadThread, this, 0, &uiThreadId);
 
-  bool operator!()
-  {
-    if ((SourceReadSession == NULL) |
-	(TargetWriteSession == NULL))
-      return true;
-    else
-      return false;
-  }
+        return SourceReadThreadHandle != INVALID_HANDLE_VALUE;
+    }
 
-  FileCopyContext(StrArc *Template,
-		  DWORD dwPipeBufferSize,
-		  PUNICODE_STRING SourceName,
-		  HANDLE SourceHandle,
-		  PUNICODE_STRING TargetName,
-		  HANDLE TargetHandle)
-    : SourceReadSession(NULL),
-      TargetWriteSession(NULL),
-      SourceName(SourceName),
-      SourceHandle(SourceHandle),
-      TargetName(TargetName),
-      TargetHandle(TargetHandle),
-      SourceReadThreadHandle(INVALID_HANDLE_VALUE)
-  {
-    HANDLE hReadPipe;
-    HANDLE hWritePipe;
-    if (!CreatePipe(&hReadPipe, &hWritePipe, NULL, dwPipeBufferSize))
-      return;
+    bool operator!()
+    {
+        if ((SourceReadSession == NULL) |
+            (TargetWriteSession == NULL))
+            return true;
+        else
+            return false;
+    }
 
-    SourceReadSession = Template->TemplateNew(hWritePipe);
-    TargetWriteSession = Template->TemplateNew(hReadPipe);
-  }
+    FileCopyContext(StrArc *Template,
+        DWORD dwPipeBufferSize,
+        PUNICODE_STRING SourceName,
+        HANDLE SourceHandle,
+        PUNICODE_STRING TargetName,
+        HANDLE TargetHandle)
+        : SourceReadSession(NULL),
+        TargetWriteSession(NULL),
+        SourceName(SourceName),
+        SourceHandle(SourceHandle),
+        TargetName(TargetName),
+        TargetHandle(TargetHandle),
+        SourceReadThreadHandle(INVALID_HANDLE_VALUE)
+    {
+        HANDLE hReadPipe;
+        HANDLE hWritePipe;
+        if (!CreatePipe(&hReadPipe, &hWritePipe, NULL, dwPipeBufferSize))
+            return;
 
-  ~FileCopyContext()
-  {
-    if (SourceReadSession != NULL)
-      delete SourceReadSession;
+        SourceReadSession = Template->TemplateNew(hWritePipe);
+        TargetWriteSession = Template->TemplateNew(hReadPipe);
+    }
 
-    if (TargetWriteSession != NULL)
-      delete TargetWriteSession;
-  }
+    ~FileCopyContext()
+    {
+        if (SourceReadSession != NULL)
+            delete SourceReadSession;
+
+        if (TargetWriteSession != NULL)
+            delete TargetWriteSession;
+    }
 };
 
 bool
 StrArc::BackupCopyFile(HANDLE SourceHandle,
-		       HANDLE TargetHandle,
-		       PUNICODE_STRING SourceName,
-		       PUNICODE_STRING TargetName)
+    HANDLE TargetHandle,
+    PUNICODE_STRING SourceName,
+    PUNICODE_STRING TargetName)
 {
-  FileCopyContext Context(this,
-			  dwBufferSize,
-			  SourceName,
-			  SourceHandle,
-			  TargetName,
-			  TargetHandle);
+    FileCopyContext Context(this,
+        dwBufferSize,
+        SourceName,
+        SourceHandle,
+        TargetName,
+        TargetHandle);
 
-  if (!Context)
-    return false;
+    if (!Context)
+        return false;
 
-  bool bSeekOnly = false;
+    bool bSeekOnly = false;
 
-  if (!Context.StartSourceReadThread())
-    return false;
+    if (!Context.StartSourceReadThread())
+        return false;
 
-  bool bWriteResult = Context.GetTargetWriteSession()->
-    WriteFileStreamsFromArchive(TargetName,
-				TargetHandle,
-				bSeekOnly);
+    bool bWriteResult = Context.GetTargetWriteSession()->
+        WriteFileFromArchive(TargetName,
+            TargetHandle,
+            bSeekOnly);
 
-  bool bReadResult =
-    Context.GetSourceReadThreadResult();
+    bool bReadResult =
+        Context.GetSourceReadThreadResult();
 
-  return bReadResult & bWriteResult;
+    return bReadResult & bWriteResult;
 }

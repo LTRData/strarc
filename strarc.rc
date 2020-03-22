@@ -2,14 +2,16 @@
 #define _UNICODE
 #include <windows.h>
 
+#include "version.h"
+
 /////////////////////////////////////////////////////////////////////////////
 //
 // Version
 //
 
 VS_VERSION_INFO VERSIONINFO
-FILEVERSION    0,2,0,0
-PRODUCTVERSION 0,2,0,0
+FILEVERSION    STRARC_VERSION_INFO
+PRODUCTVERSION STRARC_VERSION_INFO
 FILEFLAGSMASK  VS_FFI_FILEFLAGSMASK
 #ifndef DEBUG
   FILEFLAGS    0
@@ -26,12 +28,12 @@ BEGIN
 		BEGIN
 			VALUE "CompanyName",	"LTR Data\0"
 			VALUE "FileDescription","Stream Archive I/O utility\0"
-			VALUE "FileVersion",	"0.2.0c\0"
+			VALUE "FileVersion",	STRARC_VERSION "\0"
 			VALUE "InternalName",	"strarc\0"
-			VALUE "LegalCopyright",	"Copyright \251 2004 - 2013 LTR Data, Olof Lagerkvist.\0"
+			VALUE "LegalCopyright",	"Copyright \251 2004-2016 LTR Data, Olof Lagerkvist.\0"
 			VALUE "OriginalFilename","strarc.exe\0"
 			VALUE "ProductName",	"Stream Archive I/O Utility\0"
-			VALUE "ProductVersion",	"0.2.0c\0"
+			VALUE "ProductVersion",	STRARC_VERSION "\0"
 		END
 	END
 	BLOCK "VarFileInfo"
