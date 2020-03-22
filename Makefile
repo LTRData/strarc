@@ -7,12 +7,36 @@ CPU=i386
 !ENDIF
 
 WARNING_LEVEL=/nologo /WX /W4 /wd4214 /wd4201 /wd4206
+
+!IF "$(DEBUG)" == ""
+
 !IF "$(CPU)" == "i386"
+
 OPTIMIZATION=/Yc /Ox /GF /GR- /Zi /MD
+
 !ELSE
+
 OPTIMIZATION=/Yc /Ox /GFS- /GR- /Zi /MD
+
 !ENDIF
+
 LINK_SWITCHES=/nologo /release /opt:nowin98,ref,icf=10 /largeaddressaware /debug
+
+!ELSE
+
+!IF "$(CPU)" == "i386"
+
+OPTIMIZATION=/Zi /MD
+
+!ELSE
+
+OPTIMIZATION=/Zi /MD
+
+!ENDIF
+
+LINK_SWITCHES=/nologo /release /opt:nowin98,ref,icf=10 /largeaddressaware /debug /defaultlib:bufferoverflowU.lib
+
+!ENDIF
 
 $(CPU)\strarc.exe: ..\lib\minwcrt.lib Makefile                              $(CPU)\strarc.obj $(CPU)\constnam.obj $(CPU)\restore.obj $(CPU)\backup.obj $(CPU)\regsnap.obj $(CPU)\bfcopy.obj $(CPU)\lnk.obj strarc.res
 	link $(LINK_SWITCHES) /out:$(CPU)\strarc.exe /pdb:$(CPU)\strarc.pdb $(CPU)\strarc.obj $(CPU)\constnam.obj $(CPU)\restore.obj $(CPU)\backup.obj $(CPU)\regsnap.obj $(CPU)\bfcopy.obj $(CPU)\lnk.obj strarc.res

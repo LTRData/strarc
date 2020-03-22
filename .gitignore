@@ -359,3 +359,5 @@ old/
 *.err
 todo.txt
 fnd.cmd
+*.bin
+*.sa

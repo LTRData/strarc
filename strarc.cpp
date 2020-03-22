@@ -43,7 +43,7 @@ void
 usage()
 {
   fprintf(stderr,
-	  "Backup Stream archive I/O Utility, version 0.2.0\r\n"
+	  "Backup Stream archive I/O Utility, version 0.2.0c\r\n"
 	  "Build date: " __DATE__
 	  ", Copyright (C) Olof Lagerkvist 2004-2013\r\n"
 	  "http://www.ltr-data.se      olof@ltr-data.se\r\n"
@@ -258,7 +258,7 @@ __declspec(noreturn)
     fputs(errmsg, stderr);
   if (bDisplaySysErrMsg)
     if (Name != NULL)
-      oem_printf(stderr, "'%1': %2%%n", Name, syserrmsg);
+      oem_printf(stderr, "'%1!ws!': %2%%n", Name, syserrmsg);
     else
       oem_printf(stderr, "%1%%n", syserrmsg);
 
@@ -656,7 +656,8 @@ StrArc::Main(int argc, LPWSTR *argv)
 		       FILE_SHARE_READ |
 		       FILE_SHARE_WRITE |
 		       FILE_SHARE_DELETE,
-		       FILE_DIRECTORY_FILE);
+		       FILE_DIRECTORY_FILE |
+		       FILE_OPEN_FOR_BACKUP_INTENT);
 
       if (RootDirectory == INVALID_HANDLE_VALUE)
 	status_exit(XE_CHANGE_DIR, wczStartDir);
@@ -674,7 +675,8 @@ StrArc::Main(int argc, LPWSTR *argv)
 			      FILE_SHARE_READ |
 			      FILE_SHARE_WRITE |
 			      FILE_SHARE_DELETE,
-			      FILE_DIRECTORY_FILE,
+			      FILE_DIRECTORY_FILE |
+			      FILE_OPEN_FOR_BACKUP_INTENT,
 			      TRUE);
       if (RootDirectory == INVALID_HANDLE_VALUE)
 	status_exit(XE_CHANGE_DIR, wczStartDir);

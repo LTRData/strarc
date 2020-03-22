@@ -263,19 +263,20 @@ private:
 
   // This function examines all paths and filenames on behalf of the backup and
   // restore routines. It identifies names containing strings matching the -i
-  // or -e switches on the command line and returns true if this name is ok to
-  // process.
-  // If IncludeIfNotExcluded is set to true, this function only checks for
-  // explicit exclusions and returns false unless an exclusion string is
-  // matched. Otherwise, this functions continues with comparing to inclusion
-  // strings and if any such strings exist and path does not match any of them,
-  // true is returned.
-  bool
-  ExcludedString(PUNICODE_STRING Path, bool IncludeIfNotExcluded)
+  // or -e switches on the command line and returns matches in two optional
+  // parameters.
+  void
+  ExcludedString(PUNICODE_STRING Path,
+		 bool *Excluded OPTIONAL,
+		 bool *Included OPTIONAL)
   {
     // This routine does not handle empty strings correctly.
     if (Path->Length == 0)
-      return false;
+      {
+	if (Excluded != NULL) *Excluded = false;
+	if (Included != NULL) *Included = true;
+	return;
+      }
 
     LPCWSTR wcPathEnd = Path->Buffer + (Path->Length >> 1);
 
@@ -292,15 +293,23 @@ private:
 		 (DWORD) (wcPathEnd - wcPathPtr) >= dwExclStrLen;
 		 wcPathPtr++)
 	      if (wcsnicmp(wcPathPtr, wczExcludeString, dwExclStrLen) == 0)
-		return true;
+		{
+		  if (Excluded != NULL) *Excluded = true;
+		  if (Included != NULL) *Included = false;
+		  return;
+		}
 
 	    wczExcludeString += dwExclStrLen + 1;
 	  }
 	while (--dwExcludeString);
       }
 
-    if ((dwIncludeStrings == 0) | IncludeIfNotExcluded)
-      return false;
+    if (dwIncludeStrings == 0)
+      {
+	if (Excluded != NULL) *Excluded = false;
+	if (Included != NULL) *Included = true;
+	return;
+      }
 
     DWORD dwIncludeString = dwIncludeStrings;
     LPCWSTR wczIncludeString = szIncludeStrings;
@@ -313,13 +322,18 @@ private:
 	     (DWORD) (wcPathEnd - wcPathPtr) >= dwInclStrLen;
 	     wcPathPtr++)
 	  if (wcsnicmp(wcPathPtr, wczIncludeString, dwInclStrLen) == 0)
-	    return false;
+	    {
+	      if (Excluded != NULL) *Excluded = false;
+	      if (Included != NULL) *Included = true;
+	      return;
+	    }
 
 	wczIncludeString += dwInclStrLen + 1;
       }
     while (--dwIncludeString);
 
-    return true;
+    if (Excluded != NULL) *Excluded = false;
+    if (Included != NULL) *Included = false;
   }
 
   bool
@@ -363,12 +377,27 @@ private:
     return dwTotalBytes;
   }
 
-  // This function reads a header for a new file from the archive. If not a
-  // valid header is found the function seeks forward in the archive until it
+  // This function reads a stream header within a restore operation for a file.
+  // There could be several streams for each file.
+  // If no more stream headers exist in input archive, this function zeroes
+  // header memory and returns a value less than HEADER_SIZE.
+  DWORD
+  ReadStreamHeader(WIN32_STREAM_ID * lpBuf)
+  {
+    DWORD dwBytesRead = ReadArchive((LPBYTE) lpBuf, HEADER_SIZE);
+
+    if (dwBytesRead < HEADER_SIZE)
+      memset(lpBuf, 0, HEADER_SIZE);
+
+    return dwBytesRead;
+  }
+
+  // This function reads a file header for a new file from the archive. If not
+  // a valid header is found the function seeks forward in the archive until it
   // finds a valid header or EOF. If a valid header is found, true is returned,
   // otherwise false is returned.
   bool
-  ReadArchiveHeader(WIN32_STREAM_ID * lpBuf)
+  ReadNextFileHeader(WIN32_STREAM_ID * lpBuf)
   {
     DWORD dwBytesRead = ReadArchive((LPBYTE) lpBuf, HEADER_SIZE);
 

@@ -86,7 +86,15 @@ StrArc::BackupFile(PUNICODE_STRING File,
 		   PUNICODE_STRING ShortName,
 		   bool bTraverseDirectories)
 {
-  if (ExcludedString(File, false))
+  // This could be a directory. In that case, we do not want to skip it just
+  // because it does not match any of the -i strings, but still skip if it
+  // matches any of the -e strings. This is to find files and directories in
+  // this directory that may match an -i string.
+
+  bool bExcludeThis;
+  bool bIncludeThis;
+  ExcludedString(File, &bExcludeThis, &bIncludeThis);
+  if (bExcludeThis)
     return true;
 
   ACCESS_MASK file_access = GENERIC_READ;
@@ -146,6 +154,12 @@ StrArc::BackupFile(PUNICODE_STRING File,
     {
       NtClose(hFile);
       return false;
+    }
+
+  if (!bIncludeThis)
+    {
+      NtClose(hFile);
+      return true;
     }
 
   if (File->Length == 0)

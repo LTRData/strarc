@@ -540,8 +540,7 @@ StrArc::WriteAlternateStreamFromArchive(DWORD dwBytesRead,
 
       for (;;)
 	{
-	  dwBytesRead = ReadArchive(Buffer,
-				    HEADER_SIZE);
+	  dwBytesRead = ReadStreamHeader(header);
 
 	  if (dwBytesRead == 0)
 	    {
@@ -612,8 +611,7 @@ StrArc::WriteFileStreamsFromArchive(PUNICODE_STRING File,
 	  return false;
 	}
 
-      dwBytesRead = ReadArchive(Buffer,
-				HEADER_SIZE);
+      dwBytesRead = ReadStreamHeader(header);
 
       if (dwBytesRead == 0)
 	break;
@@ -722,15 +720,12 @@ StrArc::RestoreFile(PUNICODE_STRING File,
 		   ShortName->Length >> 1, ShortName->Buffer);
     }
 
-  // If a directory, do not skip it just because it does not match any of the
-  // -i strings.
-  bool bIncludeIfNotExcluded =
-    (FileInfo->dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
-  bool bSkipThis =
-    ExcludedString(File, bIncludeIfNotExcluded);
+  bool bIncludeThis;
+  ExcludedString(File, NULL, &bIncludeThis);
+
   FILE_BASIC_INFORMATION existing_file_info = { 0 };
 
-  if (!bSkipThis)
+  if (bIncludeThis)
     {
       HANDLE hFile =
 	NativeOpenFile(RootDirectory,
@@ -772,7 +767,7 @@ StrArc::RestoreFile(PUNICODE_STRING File,
 
 	      if (bOverwriteArchived &&
 		  (existing_file_info.FileAttributes & FILE_ATTRIBUTE_ARCHIVE))
-		bSkipThis = true;
+		bIncludeThis = false;
 	      else if (bOverwriteOlder)
 		{
 		  if ((~existing_file_info.FileAttributes) &
@@ -781,7 +776,7 @@ StrArc::RestoreFile(PUNICODE_STRING File,
 		      if (CompareFileTime((LPFILETIME)
 					  &existing_file_info.LastWriteTime,
 					  &FileInfo->ftLastWriteTime) >= 0)
-			bSkipThis = true;
+			bIncludeThis = false;
 		    }
 		}
 	    }
@@ -794,7 +789,7 @@ StrArc::RestoreFile(PUNICODE_STRING File,
 			 File->Length >> 1, File->Buffer);
 	    }
 
-	  if ((!bSkipThis) &&
+	  if ((bIncludeThis) &&
 	      (existing_file_info.FileAttributes & FILE_ATTRIBUTE_READONLY))
 	    {
 	      existing_file_info.FileAttributes &= ~FILE_ATTRIBUTE_READONLY;
@@ -837,17 +832,17 @@ StrArc::RestoreFile(PUNICODE_STRING File,
 	    }
 
 	  if (bFreshenExisting)
-	    bSkipThis = true;
+	    bIncludeThis = false;
 	}
     }
 
   if (bVerbose)
     {
-      if (bSkipThis)
+      if (!bIncludeThis)
 	fputs(", Skipping", stderr);
     }
   else if (bTestMode | bListFiles)
-    if (!bSkipThis)
+    if (bIncludeThis)
       {
 	OEM_STRING oem_file_name;
 	NTSTATUS status =
@@ -873,7 +868,7 @@ StrArc::RestoreFile(PUNICODE_STRING File,
 
   HANDLE hFile = INVALID_HANDLE_VALUE;
 
-  if (bTestMode | bSkipThis)
+  if (bTestMode | !bIncludeThis)
     bSeekOnly = true;
   else if (FileInfo->dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
     {
@@ -949,7 +944,7 @@ StrArc::RestoreFile(PUNICODE_STRING File,
 			      FILE_OPEN_REPARSE_POINT : 0),
 			     TRUE);
 
-  if ((!bTestMode) && (!bSkipThis) && (hFile == INVALID_HANDLE_VALUE))
+  if ((!bTestMode) && bIncludeThis && (hFile == INVALID_HANDLE_VALUE))
     {
       WErrMsgA errmsg;
       oem_printf(stderr, "strarc: Cannot create '%2!.*ws!': %1%%n",
@@ -1138,7 +1133,7 @@ StrArc::RestoreFile(PUNICODE_STRING File,
   if (bVerbose)
     fputs("\r\n", stderr);
 
-  if (((hFile != INVALID_HANDLE_VALUE) | bTestMode) && (!bSkipThis))
+  if (((hFile != INVALID_HANDLE_VALUE) | bTestMode) && bIncludeThis)
     ++dwFileCounter;
 
   if (hFile != INVALID_HANDLE_VALUE)
@@ -1150,7 +1145,7 @@ StrArc::RestoreFile(PUNICODE_STRING File,
 void
 StrArc::RestoreDirectoryTree()
 {
-  if (!ReadArchiveHeader(header))
+  if (!ReadNextFileHeader(header))
     return;
 
   for (;;)
@@ -1163,11 +1158,11 @@ StrArc::RestoreDirectoryTree()
 	   (header->Size.QuadPart != sizeof BY_HANDLE_FILE_INFORMATION + 26)) |
 	  (header->dwStreamNameSize == 0) |
 	  (header->dwStreamNameSize >= 65535) | (header->dwStreamNameSize & 1))
-	if (!ReadArchiveHeader(header))
+	if (!ReadNextFileHeader(header))
 	  return;
 
       if (header->dwStreamNameSize > USHORT_MAX)
-	if (!ReadArchiveHeader(header))
+	if (!ReadNextFileHeader(header))
 	  return;
 
       DWORD dwBytesToRead = header->dwStreamNameSize + header->Size.LowPart;
@@ -1177,7 +1172,7 @@ StrArc::RestoreDirectoryTree()
 
       if (dwBytesRead != dwBytesToRead)
 	{
-	  if (!ReadArchiveHeader(header))
+	  if (!ReadNextFileHeader(header))
 	    status_exit(XE_ARCHIVE_TRUNC);
 
 	  continue;
