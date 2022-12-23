@@ -1,4 +1,4 @@
-/* Stream Archive I/O utility, Copyright (C) Olof Lagerkvist 2004-2016
+/* Stream Archive I/O utility, Copyright (C) Olof Lagerkvist 2004-2022
  *
  * apifunc.cpp
  * Definitions for routines that publish strarc public API.

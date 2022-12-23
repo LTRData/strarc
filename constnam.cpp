@@ -1,4 +1,4 @@
-/* Stream Archive I/O utility, Copyright (C) Olof Lagerkvist 2004-2016
+/* Stream Archive I/O utility, Copyright (C) Olof Lagerkvist 2004-2022
 *
 * constnam.cpp
 * Human readable names of backup-related constants.

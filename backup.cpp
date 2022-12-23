@@ -1,4 +1,4 @@
-/* Stream Archive I/O utility, Copyright (C) Olof Lagerkvist 2004-2016
+/* Stream Archive I/O utility, Copyright (C) Olof Lagerkvist 2004-2022
 *
 * backup.cpp
 * Backup operation source file.
@@ -101,7 +101,7 @@ StrArc::BackupFile(PUNICODE_STRING File,
     else
         file_access |= GENERIC_READ;
 
-    if ((BackupMethod == BACKUP_METHOD_FULL) |
+    if ((BackupMethod == BACKUP_METHOD_FULL) ||
         (BackupMethod == BACKUP_METHOD_INC))
         file_access |= FILE_WRITE_ATTRIBUTES;
 
@@ -369,7 +369,7 @@ StrArc::BackupFile(PUNICODE_STRING File,
     PUNICODE_STRING LinkName = NULL;
     if ((file_info.nNumberOfLinks > 1) && (bHardLinkSupport))
     {
-        LARGE_INTEGER FileIndex;
+        LARGE_INTEGER FileIndex = { 0 };
         FileIndex.LowPart = file_info.nFileIndexLow;
         FileIndex.HighPart = file_info.nFileIndexHigh;
 
@@ -427,7 +427,7 @@ StrArc::BackupDirectory(PUNICODE_STRING Path, HANDLE Handle)
 {
     UNICODE_STRING base_path = *Path;
 
-    if ((base_path.Length == 2) &
+    if ((base_path.Length == 2) &&
         (base_path.Buffer[0] == L'.'))
         base_path.Length = 0;
     else if (base_path.Length > 0)
@@ -443,7 +443,7 @@ StrArc::BackupDirectory(PUNICODE_STRING Path, HANDLE Handle)
         }
     }
 
-    BYTE short_name_buffer[sizeof(finddata.Base.ShortName)];
+    BYTE short_name_buffer[sizeof(finddata.Base.ShortName)] = { 0 };
     UNICODE_STRING short_name = { 0 };
     short_name.MaximumLength = sizeof(short_name_buffer);
     short_name.Buffer = (PWSTR)short_name_buffer;

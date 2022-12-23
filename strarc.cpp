@@ -1,4 +1,4 @@
-/* Stream Archive I/O utility, Copyright (C) Olof Lagerkvist 2004-2016
+/* Stream Archive I/O utility, Copyright (C) Olof Lagerkvist 2004-2022
 *
 * strarc.cpp
 * Definitions for some common outline members of StrArc class.
@@ -88,6 +88,7 @@ StrArc::Initialize()
     bOverwriteArchived = false;
     bFreshenExisting = false;
     dwExtractCreation = FILE_CREATE;
+    dwCreateOption = FILE_OPEN_FOR_BACKUP_INTENT;
     bRestoreShortNamesOnly = false;
     bBackupRegistrySnapshots = false;
 
@@ -318,7 +319,7 @@ bool
 StrArc::OpenFilterUtility(LPWSTR wczFilterCmd,
 bool bBackupMode)
 {
-    HANDLE hPipe[2];
+    HANDLE hPipe[2] = { NULL };
     if (!CreatePipe(&hPipe[0], &hPipe[1], NULL, 0))
         return false;
 

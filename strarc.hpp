@@ -1,4 +1,4 @@
-/* Stream Archive I/O utility, Copyright (C) Olof Lagerkvist 2004-2016
+/* Stream Archive I/O utility, Copyright (C) Olof Lagerkvist 2004-2022
 *
 * strarc.hpp
 * Declarations of common variables and functions.
@@ -254,7 +254,7 @@ private:
     {
         if ((header->dwStreamId == BACKUP_INVALID) &&
             (header->dwStreamAttributes == STRARC_MAGIC) &&
-            ((header->Size.QuadPart == sizeof BY_HANDLE_FILE_INFORMATION) |
+            ((header->Size.QuadPart == sizeof BY_HANDLE_FILE_INFORMATION) ||
             (header->Size.QuadPart == sizeof BY_HANDLE_FILE_INFORMATION + 26))
             && (header->dwStreamNameSize > 0)
             && (header->dwStreamNameSize <= 65535))
@@ -476,12 +476,12 @@ private:
         if (dwBytesRead < HEADER_SIZE)
             return false;
 
-        if ((header->dwStreamId == BACKUP_INVALID) &
-            (header->dwStreamAttributes == STRARC_MAGIC) &
-            ((header->Size.QuadPart == sizeof BY_HANDLE_FILE_INFORMATION) |
-            (header->Size.QuadPart == sizeof BY_HANDLE_FILE_INFORMATION + 26)) &
-                (header->dwStreamNameSize > 0) &
-            (header->dwStreamNameSize <= 65535) &
+        if ((header->dwStreamId == BACKUP_INVALID) &&
+            (header->dwStreamAttributes == STRARC_MAGIC) &&
+            ((header->Size.QuadPart == sizeof BY_HANDLE_FILE_INFORMATION) ||
+            (header->Size.QuadPart == sizeof BY_HANDLE_FILE_INFORMATION + 26)) &&
+            (header->dwStreamNameSize > 0) &&
+            (header->dwStreamNameSize <= 65535) &&
             ((header->dwStreamNameSize & 1) == 0))
             return true;
 
@@ -510,13 +510,13 @@ private:
                     stderr);
                 return false;
             }
-        } while ((header->dwStreamId != BACKUP_INVALID) |
-            (header->dwStreamAttributes != STRARC_MAGIC) |
-            ((header->Size.QuadPart != sizeof BY_HANDLE_FILE_INFORMATION) &
+        } while ((header->dwStreamId != BACKUP_INVALID) ||
+            (header->dwStreamAttributes != STRARC_MAGIC) ||
+            ((header->Size.QuadPart != sizeof BY_HANDLE_FILE_INFORMATION) &&
             (header->Size.QuadPart !=
-                sizeof BY_HANDLE_FILE_INFORMATION + 26)) |
-                (header->dwStreamNameSize == 0) |
-            (header->dwStreamNameSize > 65535) |
+                sizeof BY_HANDLE_FILE_INFORMATION + 26)) ||
+                (header->dwStreamNameSize == 0) ||
+            (header->dwStreamNameSize > 65535) ||
             (header->dwStreamNameSize & 1));
 
         return true;
@@ -609,6 +609,7 @@ private:
 
     LONGLONG FileCounter;
     DWORD dwExtractCreation;
+    DWORD dwCreateOption;
 
     PROCESS_INFORMATION piFilter;
 
@@ -903,8 +904,8 @@ public:
         IsInitialized() const
     {
         return
-            (hArchive != NULL) &
-            (Buffer != NULL) &
+            (hArchive != NULL) &&
+            (Buffer != NULL) &&
             (RootDirectory != NULL);
     }
 

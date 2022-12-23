@@ -1,4 +1,4 @@
-/* Stream Archive I/O utility, Copyright (C) Olof Lagerkvist 2004-2016
+/* Stream Archive I/O utility, Copyright (C) Olof Lagerkvist 2004-2022
 *
 * restore.cpp
 * Restore operation source file.
@@ -83,8 +83,8 @@ StrArc::FillEntireBuffer(DWORD &dwBytesRead,
                 header->dwStreamNameSize >> 1,
                 header->cStreamName);
 
-        if ((header->dwStreamId == BACKUP_SPARSE_BLOCK) &
-            (header->dwStreamAttributes == STREAM_SPARSE_ATTRIBUTE) &
+        if ((header->dwStreamId == BACKUP_SPARSE_BLOCK) &&
+            (header->dwStreamAttributes == STREAM_SPARSE_ATTRIBUTE) &&
             (header->Size.QuadPart >= sizeof(LARGE_INTEGER)))
         {
             PLARGE_INTEGER StartPosition = (PLARGE_INTEGER)
@@ -141,7 +141,7 @@ StrArc::WriteFileHardLinkFromArchive(HANDLE &hFile,
 
     HANDLE hSource = INVALID_HANDLE_VALUE;
 
-    if (bHardLinkSupport & !bSeekOnly)
+    if (bHardLinkSupport && !bSeekOnly)
     {
         if (!NativeDeleteFile(hFile))
         {
@@ -162,7 +162,8 @@ StrArc::WriteFileHardLinkFromArchive(HANDLE &hFile,
             0,
             FILE_SHARE_READ | FILE_SHARE_WRITE |
             FILE_SHARE_DELETE,
-            FILE_OPEN_FOR_BACKUP_INTENT);
+            dwCreateOption);
+
         if (hSource == INVALID_HANDLE_VALUE)
         {
             WErrMsgA errmsg;
@@ -227,6 +228,7 @@ StrArc::WriteFileHardLinkFromArchive(HANDLE &hFile,
         FILE_NON_DIRECTORY_FILE |
         FILE_SEQUENTIAL_ONLY |
         FILE_OPEN_FOR_BACKUP_INTENT);
+
     if (hSource == INVALID_HANDLE_VALUE)
     {
         WErrMsgA errmsg;
@@ -250,8 +252,9 @@ StrArc::WriteFileHardLinkFromArchive(HANDLE &hFile,
         FILE_ATTRIBUTE_NORMAL,
         FILE_SHARE_READ | FILE_SHARE_DELETE,
         dwExtractCreation,
-        FILE_OPEN_FOR_BACKUP_INTENT,
+        dwCreateOption,
         TRUE);
+    
     if (hFile == INVALID_HANDLE_VALUE)
     {
         WErrMsgA errmsg;
@@ -318,8 +321,8 @@ StrArc::WriteFileDataStreamFromArchive(HANDLE &hFile,
 {
     LPVOID lpCtx = NULL;
 
-    if ((!bSeekOnly) &
-        (header->dwStreamId == BACKUP_SPARSE_BLOCK) &
+    if ((!bSeekOnly) &&
+        (header->dwStreamId == BACKUP_SPARSE_BLOCK) &&
         (header->dwStreamAttributes == STREAM_SPARSE_ATTRIBUTE))
     {
         PLARGE_INTEGER StartPosition = (PLARGE_INTEGER)
@@ -496,7 +499,7 @@ StrArc::WriteFileAlternateStreamsFromArchive(DWORD dwBytesRead,
                     FILE_SHARE_READ |
                     FILE_SHARE_DELETE,
                     FILE_SUPERSEDE,
-                    FILE_OPEN_FOR_BACKUP_INTENT |
+                    dwCreateOption |
                     FILE_RANDOM_ACCESS,
                     FALSE);
 
@@ -560,7 +563,7 @@ StrArc::WriteFileAlternateStreamsFromArchive(DWORD dwBytesRead,
                 fputs(", Ok", stderr);
         }
 
-        if ((!bSeekOnly) & (header->Size.QuadPart > 0) &
+        if ((!bSeekOnly) && (header->Size.QuadPart > 0) &&
             (header->dwStreamAttributes == STREAM_NORMAL_ATTRIBUTE))
         {
             DWORD offset = GetDataOffset();
@@ -572,7 +575,7 @@ StrArc::WriteFileAlternateStreamsFromArchive(DWORD dwBytesRead,
                 DWORD dwIO;
                 BOOL bResult = WriteFile(hStream, data, size, &dwIO, NULL);
 
-                if ((!bResult) | (dwIO != size))
+                if ((!bResult) || (dwIO != size))
                 {
                     WErrMsgA errmsg;
                     oem_printf(stderr,
@@ -749,7 +752,7 @@ StrArc::WriteFileFromArchive(PUNICODE_STRING File,
 
             dwBytesRead = ReadStreamHeader();
         }
-        else if ((!bSeekOnly) &
+        else if ((!bSeekOnly) &&
             (header->dwStreamId == BACKUP_ALTERNATE_DATA))
         {
             // BackupWrite is sadly broken in certain scenarios regarding named
@@ -853,7 +856,7 @@ StrArc::RestoreFile(PUNICODE_STRING File,
                 FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES,
                 0,
                 FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                FILE_OPEN_FOR_BACKUP_INTENT |
+                dwCreateOption |
                 FILE_OPEN_REPARSE_POINT);
 
         if (hFile == INVALID_HANDLE_VALUE &&
@@ -866,7 +869,7 @@ StrArc::RestoreFile(PUNICODE_STRING File,
                     0,
                     FILE_SHARE_READ | FILE_SHARE_WRITE |
                     FILE_SHARE_DELETE,
-                    FILE_OPEN_FOR_BACKUP_INTENT);
+                    dwCreateOption);
         }
 
         if (hFile != INVALID_HANDLE_VALUE)
@@ -964,7 +967,7 @@ StrArc::RestoreFile(PUNICODE_STRING File,
         if (!bIncludeThis)
             fputs(", Skipping", stderr);
     }
-    else if (bTestMode | bListFiles)
+    else if (bTestMode || bListFiles)
         if (bIncludeThis)
         {
             OEM_STRING oem_file_name;
@@ -991,7 +994,7 @@ StrArc::RestoreFile(PUNICODE_STRING File,
 
     HANDLE hFile = INVALID_HANDLE_VALUE;
 
-    if (bTestMode | !bIncludeThis)
+    if (bTestMode || !bIncludeThis)
     {
         bSeekOnly = true;
     }
@@ -1036,7 +1039,7 @@ StrArc::RestoreFile(PUNICODE_STRING File,
                     ~FILE_ATTRIBUTE_READONLY,
                     FILE_SHARE_READ | FILE_SHARE_WRITE |
                     FILE_SHARE_DELETE,
-                    FILE_OPEN_FOR_BACKUP_INTENT |
+                    dwCreateOption |
                     ((existing_file_info.FileAttributes &
                         FILE_ATTRIBUTE_REPARSE_POINT) ?
                         FILE_OPEN_REPARSE_POINT : 0),
@@ -1048,6 +1051,7 @@ StrArc::RestoreFile(PUNICODE_STRING File,
                     {
                     case ERROR_ACCESS_DENIED:
                     case ERROR_SHARING_VIOLATION:
+                    case ERROR_PRIVILEGE_NOT_HELD:
                         if (desired_access & DELETE)
                         {
                             desired_access &= ~DELETE;
@@ -1110,7 +1114,7 @@ StrArc::RestoreFile(PUNICODE_STRING File,
                 ~FILE_ATTRIBUTE_READONLY,
                 FILE_SHARE_READ | FILE_SHARE_DELETE,
                 dwExtractCreation,
-                FILE_OPEN_FOR_BACKUP_INTENT |
+                dwCreateOption |
                 ((existing_file_info.FileAttributes &
                     FILE_ATTRIBUTE_REPARSE_POINT) ?
                     FILE_OPEN_REPARSE_POINT : 0),
@@ -1121,6 +1125,7 @@ StrArc::RestoreFile(PUNICODE_STRING File,
                 switch (GetLastError())
                 {
                 case ERROR_ACCESS_DENIED:
+                case ERROR_PRIVILEGE_NOT_HELD:
                     if (desired_access & ACCESS_SYSTEM_SECURITY)
                     {
                         desired_access &= ~ACCESS_SYSTEM_SECURITY;
@@ -1241,7 +1246,7 @@ StrArc::RestoreFile(PUNICODE_STRING File,
     if (!WriteFileFromArchive(File, hFile, bSeekOnly))
         return false;
 
-    if ((!bSeekOnly) & (hFile != INVALID_HANDLE_VALUE))
+    if ((!bSeekOnly) && (hFile != INVALID_HANDLE_VALUE))
     {
         BY_HANDLE_FILE_INFORMATION FileInfoNow;
         if (GetFileInformationByHandle(hFile, &FileInfoNow))
@@ -1285,7 +1290,7 @@ StrArc::RestoreFile(PUNICODE_STRING File,
             oem_printf(stderr, "Cannot get file attributes: %1", errmsg);
         }
 
-        if (bProcessFileTimes | bProcessFileAttribs)
+        if (bProcessFileTimes || bProcessFileAttribs)
         {
             if (bProcessFileTimes)
             {
@@ -1331,7 +1336,7 @@ StrArc::RestoreFile(PUNICODE_STRING File,
     if (bVerbose)
         fputs("\r\n", stderr);
 
-    if (((hFile != INVALID_HANDLE_VALUE) | bTestMode) && bIncludeThis)
+    if (((hFile != INVALID_HANDLE_VALUE) || bTestMode) && bIncludeThis)
         ++FileCounter;
 
     if (hFile != INVALID_HANDLE_VALUE)
@@ -1353,7 +1358,7 @@ StrArc::RestoreDirectoryTree()
         if ((header->dwStreamId != BACKUP_INVALID) ||
             (header->dwStreamAttributes != STRARC_MAGIC) ||
             ((header->Size.QuadPart != sizeof BY_HANDLE_FILE_INFORMATION) &&
-            (header->Size.QuadPart != sizeof BY_HANDLE_FILE_INFORMATION + 26)) ||
+                (header->Size.QuadPart != LONGLONG(sizeof BY_HANDLE_FILE_INFORMATION) + 26)) ||
                 (header->dwStreamNameSize == 0) ||
             (header->dwStreamNameSize >= 65535) || (header->dwStreamNameSize & 1))
         {
@@ -1395,7 +1400,7 @@ StrArc::RestoreDirectoryTree()
             sizeof FileInfo);
 
         WCHAR wczShortName[14] = L"";
-        if (header->Size.QuadPart == sizeof(BY_HANDLE_FILE_INFORMATION) + 26)
+        if (header->Size.QuadPart == LONGLONG(sizeof(BY_HANDLE_FILE_INFORMATION)) + 26)
         {
             CopyMemory(wczShortName, Buffer + HEADER_SIZE +
                 header->dwStreamNameSize +

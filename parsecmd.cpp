@@ -1,4 +1,4 @@
-/* Stream Archive I/O utility, Copyright (C) Olof Lagerkvist 2004-2016
+/* Stream Archive I/O utility, Copyright (C) Olof Lagerkvist 2004-2022
 *
 * parsecmd.cpp
 * This contains definition for command line parse functions.
@@ -45,7 +45,7 @@ usage()
     fprintf(stderr,
         "Backup Stream archive I/O Utility, version " STRARC_VERSION "\r\n"
         "Build date: " __DATE__
-        ", Copyright (C) Olof Lagerkvist 2004-2016\r\n"
+        ", Copyright (C) Olof Lagerkvist 2004-2022\r\n"
         "http://www.ltr-data.se      olof@ltr-data.se\r\n"
         "\n"
         "Usage:\r\n"
@@ -197,17 +197,17 @@ StrArc::Main(int argc, LPWSTR *argv)
             switch (argv[1][0] | 0x20)
             {
             case L'c':
-                if (bRestoreMode | bTestMode)
+                if (bRestoreMode || bTestMode)
                     return usage();
                 bBackupMode = true;
                 break;
             case L'x':
-                if (bBackupMode | bTestMode)
+                if (bBackupMode || bTestMode)
                     return usage();
                 bRestoreMode = true;
                 break;
             case L't':
-                if (bBackupMode | bRestoreMode)
+                if (bBackupMode || bRestoreMode)
                     return usage();
                 bTestMode = true;
                 break;
@@ -407,14 +407,14 @@ StrArc::Main(int argc, LPWSTR *argv)
     }
 
     // More than one parameter is only allowed in backup mode.
-    if ((argc > 2) & (!bBackupMode))
+    if ((argc > 2) && (!bBackupMode))
         return usage();
 
     // Needs one of -c, -x or -t switches.
     if (((int)bBackupMode + (int)bRestoreMode + (int)bTestMode) != 1)
         return usage();
 
-    if (bListFiles & (bTestMode | bVerbose))
+    if (bListFiles && (bTestMode || bVerbose))
     {
         fputs("The -l option cannot be used with -t or -v.\r\n", stderr);
         return 1;
@@ -424,7 +424,7 @@ StrArc::Main(int argc, LPWSTR *argv)
     bool bTargetStdOut = (!bListOnly) &&
         (argc < 2 || (argv[1][0] == 0) || (wcscmp(argv[1], L"-") == 0));
 
-    if (bListFiles & bBackupMode & bTargetStdOut)
+    if (bListFiles && bBackupMode && bTargetStdOut)
     {
         fputs("Cannot list files when creating an archive to stdout.\r\n",
             stderr);
@@ -469,7 +469,7 @@ StrArc::Main(int argc, LPWSTR *argv)
         Exception(XE_CHANGE_DIR, wczStartDir);
     }
 
-    if (bRestoreMode | bTestMode)
+    if (bRestoreMode || bTestMode)
     {
         RestoreDirectoryTree();
 
