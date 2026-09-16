@@ -503,6 +503,15 @@ StrArc::Main(int argc, LPWSTR *argv)
     else
         BackupCurrentDirectory();
 
+    if (bBackupFailed)
+    {
+        fprintf(stderr,
+            "strarc aborted, %I64u file%s backed up. "
+            "The archive contains an incomplete file and must not be trusted.\n",
+            FileCounter, FileCounter != 1 ? "s" : "");
+        return XE_FILE_IO;
+    }
+
     if (bVerbose)
         if (bCancel)
             fprintf(stderr,
@@ -517,5 +526,5 @@ StrArc::Main(int argc, LPWSTR *argv)
                 FileCounter != 1 ? "s" : "",
                 bListOnly ? "found" : "backed up");
 
-    return 0;
+    return bCancel ? XE_CANCELLED : XE_NOERROR;
 }

@@ -1355,14 +1355,11 @@ StrArc::RestoreDirectoryTree()
     {
         YieldSingleProcessor();
 
-        if ((header->dwStreamId != BACKUP_INVALID) ||
-            (header->dwStreamAttributes != STRARC_MAGIC) ||
-            ((header->Size.QuadPart != sizeof BY_HANDLE_FILE_INFORMATION) &&
-                (header->Size.QuadPart != LONGLONG(sizeof BY_HANDLE_FILE_INFORMATION) + 26)) ||
-                (header->dwStreamNameSize == 0) ||
-            (header->dwStreamNameSize >= 65535) || (header->dwStreamNameSize & 1))
+        if (!IsValidFileHeader(header))
         {
-            if (!ReadNextFileHeader())
+            // An odd stream name was handed back for recovery. Keep those
+            // header bytes; the all-zero EOF sentinel was not read from disk.
+            if (!ReadNextFileHeader((header->dwStreamNameSize & 1) != 0))
                 return true;
         }
 

@@ -41,6 +41,9 @@ HANDLE hFile)
 
         if (bCancel)
         {
+            bBackupFailed = true;
+            BackupRead(NULL, NULL, 0, NULL, TRUE, FALSE, &lpCtx);
+
             if (bVerbose)
                 fputs(", break.\r\n", stderr);
 
@@ -58,6 +61,8 @@ HANDLE hFile)
             oem_printf(stderr,
                 "strarc: Cannot read '%1!wZ!': %2%%n",
                 File, errmsg);
+            bBackupFailed = true;
+            BackupRead(NULL, NULL, 0, NULL, TRUE, FALSE, &lpCtx);
             return false;
         }
 
@@ -89,6 +94,11 @@ StrArc::BackupFile(PUNICODE_STRING File,
     PUNICODE_STRING ShortName,
     bool bTraverseDirectories)
 {
+    // Once a file header has been written, a failed BackupRead can leave an
+    // incomplete stream. Never append another file to that archive.
+    if (bBackupFailed || bCancel)
+        return false;
+
     // This could be a directory. In that case, we do not want to skip it just
     // because it does not match any of the -i strings, but still skip if it
     // matches any of the -e strings. This is to find files and directories in
@@ -202,7 +212,7 @@ StrArc::BackupFile(PUNICODE_STRING File,
         BackupDirectory(File, hFile);
     }
 
-    if (bCancel)
+    if (bBackupFailed || bCancel)
     {
         NtClose(hFile);
         return false;
@@ -534,6 +544,8 @@ StrArc::BackupDirectory(PUNICODE_STRING Path, HANDLE Handle)
             }
         }
 
-        BackupFile(&name, &short_name, true);
+        if (!BackupFile(&name, &short_name, true) &&
+            (bBackupFailed || bCancel))
+            return;
     }
 }

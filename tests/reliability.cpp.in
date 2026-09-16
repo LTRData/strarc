@@ -1,0 +1,388 @@
+// Test-only Win32 doubles. Production method bodies are inserted by the runner.
+#include <algorithm>
+#include <cassert>
+#include <cstdarg>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <map>
+#include <string>
+#include <vector>
+
+typedef uint8_t BYTE;
+typedef uint16_t USHORT;
+typedef uint32_t DWORD;
+typedef int32_t LONG;
+typedef long long LONGLONG;
+typedef wchar_t WCHAR;
+typedef WCHAR *PWSTR, *LPWSTR;
+typedef const WCHAR *LPCWSTR;
+typedef char *LPSTR;
+typedef BYTE *LPBYTE;
+typedef void *LPVOID;
+typedef int BOOL, NTSTATUS, ACCESS_MASK;
+union LARGE_INTEGER { struct { DWORD LowPart; LONG HighPart; }; LONGLONG QuadPart; };
+struct WIN32_STREAM_ID {
+    DWORD dwStreamId, dwStreamAttributes;
+    LARGE_INTEGER Size;
+    DWORD dwStreamNameSize;
+    WCHAR cStreamName[1];
+};
+struct BY_HANDLE_FILE_INFORMATION {
+    DWORD dwFileAttributes, times[6], dwVolumeSerialNumber;
+    DWORD nFileSizeHigh, nFileSizeLow, nNumberOfLinks, nFileIndexHigh, nFileIndexLow;
+};
+typedef BY_HANDLE_FILE_INFORMATION *PBY_HANDLE_FILE_INFORMATION;
+struct UNICODE_STRING { USHORT Length, MaximumLength; PWSTR Buffer; };
+typedef UNICODE_STRING *PUNICODE_STRING;
+struct ANSI_STRING { const char *Buffer; };
+struct OEM_STRING { char *Buffer; DWORD Length; };
+const DWORD HEADER_SIZE = 20, STRARC_MAGIC = 0xBAC00001, BACKUP_INVALID = 0;
+const DWORD BACKUP_LINK = 5, BACKUP_DATA = 1, USHORT_MAX = 65535;
+const DWORD FILE_ATTRIBUTE_DIRECTORY = 16, FILE_ATTRIBUTE_REPARSE_POINT = 1024;
+const DWORD FILE_ATTRIBUTE_ARCHIVE = 32;
+const int TRUE = 1, FALSE = 0;
+const int FILE_READ_ATTRIBUTES = 0, SYNCHRONIZE = 0, GENERIC_READ = 0;
+const int FILE_WRITE_ATTRIBUTES = 0, FILE_SHARE_READ = 0, FILE_SHARE_WRITE = 0;
+const int FILE_SHARE_DELETE = 0, FILE_OPEN_FOR_BACKUP_INTENT = 0;
+const int FILE_SEQUENTIAL_ONLY = 0, FILE_OPEN_REPARSE_POINT = 0, FILE_LIST_DIRECTORY = 0;
+const int ERROR_OPERATION_ABORTED = 1, ERROR_NETNAME_DELETED = 2;
+const int ERROR_BROKEN_PIPE = 3, ERROR_INVALID_HANDLE = 4, ERROR_NO_MORE_FILES = 5;
+const int ERROR_INVALID_PARAMETER = 6, ERROR_HANDLE_EOF = 7, NO_ERROR = 0;
+const int STD_INPUT_HANDLE = 0, STD_OUTPUT_HANDLE = 1;
+const int HEAP_GENERATE_EXCEPTIONS = 0, HEAP_ZERO_MEMORY = 0;
+#define REGISTRY_SNAPSHOT_FILE_EXTENSION L".$sards"
+#define NT_SUCCESS(x) ((x) >= 0)
+#define MoveMemory std::memmove
+#define CopyMemory std::memcpy
+#define header ((WIN32_STREAM_ID *)Buffer)
+static std::string diagnostics;
+static int test_fprintf(FILE *, const char *format, ...) {
+    char text[4096]; va_list args; va_start(args, format);
+    int n = vsnprintf(text, sizeof(text), format, args); va_end(args);
+    assert(n >= 0 && size_t(n) < sizeof(text)); diagnostics += text; return n;
+}
+static int test_fputs(const char *text, FILE *) { diagnostics += text; return 0; }
+#define fprintf test_fprintf
+#define fputs test_fputs
+static DWORD lastError;
+static DWORD GetLastError() { return lastError; }
+static void YieldSingleProcessor() {}
+static const char *GetStreamIdDescription(DWORD) { return "test"; }
+static const char *GetStreamAttributesDescription(DWORD) { return "test"; }
+static const char *GetFileAttributesDescription(DWORD) { return "test"; }
+struct WErrMsgA { WErrMsgA(DWORD = 0) {} };
+template<typename... T> static void oem_printf(FILE *, const char *, T...) {}
+static void win_perrorA(const char *) {}
+static DWORD RtlNtStatusToDosError(NTSTATUS s) { return s; }
+static size_t wide_length(LPCWSTR p) { size_t n = 0; while (p[n]) ++n; return n; }
+static int test_wcscmp(LPCWSTR a, LPCWSTR b) {
+    while (*a && *a == *b) { ++a; ++b; } return *a - *b;
+}
+#define wcscmp test_wcscmp
+static std::string narrow(PUNICODE_STRING p) {
+    std::string s; for (size_t i = 0; i < p->Length / 2; ++i) s += char(p->Buffer[i]);
+    return s;
+}
+static void RtlInitUnicodeString(PUNICODE_STRING p, LPCWSTR s) {
+    p->Buffer = const_cast<PWSTR>(s); p->Length = USHORT(wide_length(s) * 2);
+    p->MaximumLength = p->Length;
+}
+static void InitCountedUnicodeString(PUNICODE_STRING p, PWSTR s, USHORT n) {
+    p->Buffer = s; p->Length = p->MaximumLength = n;
+}
+static void RtlCopyUnicodeString(PUNICODE_STRING a, PUNICODE_STRING b) {
+    assert(a->MaximumLength >= b->Length); memmove(a->Buffer, b->Buffer, b->Length);
+    a->Length = b->Length;
+}
+static NTSTATUS RtlAppendUnicodeStringToString(PUNICODE_STRING a, PUNICODE_STRING b) {
+    if (a->Length + b->Length > a->MaximumLength) return -1;
+    memmove((BYTE *)a->Buffer + a->Length, b->Buffer, b->Length);
+    a->Length += b->Length; return 0;
+}
+static NTSTATUS RtlAppendUnicodeToString(PUNICODE_STRING a, LPCWSTR s) {
+    UNICODE_STRING b; RtlInitUnicodeString(&b, s); return RtlAppendUnicodeStringToString(a, &b);
+}
+static void RtlInitAnsiString(ANSI_STRING *s, const char *p) { s->Buffer = p; }
+static NTSTATUS RtlAnsiStringToUnicodeString(PUNICODE_STRING p, ANSI_STRING *s, BOOL) {
+    size_t n = strlen(s->Buffer); if (n * 2 > p->MaximumLength) return -1;
+    for (size_t i = 0; i < n; ++i) p->Buffer[i] = s->Buffer[i];
+    p->Length = USHORT(n * 2); return 0;
+}
+static NTSTATUS RtlUnicodeStringToOemString(OEM_STRING *, PUNICODE_STRING, BOOL) { return -1; }
+static void RtlFreeOemString(OEM_STRING *) {}
+static void SplitPath(PUNICODE_STRING s, PUNICODE_STRING a, PUNICODE_STRING b) {
+    *b = *s; RtlInitUnicodeString(a, L".");
+    for (size_t i = 0; i < s->Length / 2; ++i) if (s->Buffer[i] == L'\\') {
+        *a = *s; a->Length = USHORT(i * 2);
+        b->Buffer = s->Buffer + i + 1; b->Length = s->Length - USHORT((i + 1) * 2);
+    }
+}
+template<typename T> struct WHeapMem {
+    std::vector<T> v; WHeapMem(size_t n, int) : v(n) {}
+    size_t Count() const { return v.size(); } operator T *() { return v.data(); }
+};
+
+struct File {
+    std::vector<BYTE> bytes;
+    size_t pos = 0, failAfter = size_t(-1), maxRead = size_t(-1), entry = 0;
+    bool directory = false, openError = false, pipe = false;
+    unsigned closes = 0, aborts = 0, opens = 0;
+    std::vector<std::string> children, lines;
+    std::vector<DWORD> reads;
+};
+typedef File *HANDLE;
+#define INVALID_HANDLE_VALUE ((HANDLE)-1)
+static std::map<std::string, File> files;
+static File input;
+static HANDLE GetStdHandle(int) { return &input; }
+static HANDLE NativeOpenFile(HANDLE, PUNICODE_STRING name, int, int, int, int) {
+    std::string key = narrow(name); if (key.empty()) key = ".";
+    File &f = files[key]; ++f.opens;
+    if (f.openError) { lastError = 9; return INVALID_HANDLE_VALUE; }
+    return &f;
+}
+static BOOL GetFileInformationByHandle(HANDLE f, PBY_HANDLE_FILE_INFORMATION info) {
+    memset(info, 0, sizeof(*info));
+    info->dwFileAttributes = f->directory ? FILE_ATTRIBUTE_DIRECTORY : 0;
+    return TRUE;
+}
+static void NtClose(HANDLE f) { ++f->closes; }
+static BOOL NativeDeleteFile(HANDLE) { return TRUE; }
+static BOOL NativeSetFileAttributes(HANDLE, DWORD) { return TRUE; }
+static BOOL ReadFile(HANDLE f, LPBYTE p, DWORD n, DWORD *done, LPVOID) {
+    f->reads.push_back(n);
+    *done = DWORD(std::min(size_t(n), std::min(f->bytes.size() - f->pos, f->maxRead)));
+    if (!*done && f->pipe) { lastError = ERROR_BROKEN_PIPE; return FALSE; }
+    if (*done) memcpy(p, f->bytes.data() + f->pos, *done); f->pos += *done; return TRUE;
+}
+static BOOL WriteFile(HANDLE f, const void *p, DWORD n, DWORD *done, LPVOID) {
+    const BYTE *b = (const BYTE *)p; f->bytes.insert(f->bytes.end(), b, b + n);
+    *done = n; return TRUE;
+}
+static BOOL BackupRead(HANDLE f, LPBYTE p, DWORD n, DWORD *done, BOOL abort, BOOL, LPVOID *ctx) {
+    if (abort) { if (*ctx) ++((File *)*ctx)->aborts; *ctx = NULL; return TRUE; }
+    *ctx = f;
+    if (f->pos >= f->failAfter) { lastError = 9; return FALSE; }
+    n = DWORD(std::min(size_t(n), f->failAfter - f->pos));
+    return ReadFile(f, p, n, done, NULL);
+}
+struct Finder {
+    struct { DWORD FileNameLength; USHORT ShortNameLength; WCHAR ShortName[13]; } Base;
+    WCHAR FileName[128]; bool valid = false;
+    bool load(HANDLE f) {
+        valid = f->entry < f->children.size(); if (!valid) return false;
+        std::string s = f->children[f->entry]; Base.FileNameLength = DWORD(s.size() * 2);
+        Base.ShortNameLength = 0;
+        for (size_t i = 0; i < s.size(); ++i) FileName[i] = s[i];
+        return true;
+    }
+    bool FindFirst(HANDLE f) { f->entry = 0; return load(f); }
+    bool FindFirst(HANDLE, PUNICODE_STRING) { return false; }
+    bool FindNext(HANDLE f) { ++f->entry; return load(f); }
+    operator bool() const { return valid; }
+    DWORD GetLastWin32Error() const { return ERROR_NO_MORE_FILES; }
+};
+struct WOverlappedIOC {
+    operator bool() const { return true; }
+    size_t LineRecv(HANDLE f, char *p, DWORD) {
+        if (f->entry == f->lines.size()) { lastError = ERROR_HANDLE_EOF; return 0; }
+        std::string s = f->lines[f->entry++]; strcpy(p, s.c_str()); return s.size();
+    }
+    size_t LineRecvW(HANDLE f, PWSTR p, DWORD) {
+        char s[128]; size_t n = LineRecv(f, s, 128);
+        for (size_t i = 0; i < n; ++i) p[i] = s[i]; return n * 2;
+    }
+};
+
+class StrArc {
+public:
+    enum { XE_NOERROR, XE_CANCELLED, XE_FILE_IO, XE_ARCHIVE_IO, XE_ARCHIVE_TRUNC,
+           XE_BAD_BUFFER, XE_NOT_ENOUGH_MEMORY };
+    enum { BACKUP_METHOD_COPY, BACKUP_METHOD_FULL, BACKUP_METHOD_DIFF, BACKUP_METHOD_INC };
+    DWORD dwBufferSize, dwArchiveBytesBuffered = 0;
+    std::vector<BYTE> storage;
+    LPBYTE Buffer;
+    HANDLE hArchive, RootDirectory = NULL;
+    WCHAR path[32768];
+    UNICODE_STRING FullPath;
+    Finder finddata;
+    bool bBackupFailed = false, bCancel = false, bVerbose = false, bListOnly = false;
+    bool bLocal = false, bListFiles = false, bBackupRegistrySnapshots = false;
+    bool bHardLinkSupport = false, bSkipShortNames = true, bProcessSecurity = false;
+    bool bFilesFromStdIn = false, bFilesFromStdInUnicode = false;
+    int BackupMethod = BACKUP_METHOD_COPY;
+    unsigned long long FileCounter = 0;
+    std::map<std::string, std::vector<BYTE> > restored;
+    explicit StrArc(HANDLE archive, DWORD size = 65536) :
+        dwBufferSize(size), storage(size), Buffer(storage.data()), hArchive(archive) {
+        FullPath.Buffer = path; FullPath.Length = 0; FullPath.MaximumLength = 65534;
+    }
+    void Exception(int code) { throw code; }
+    void ExcludedString(PUNICODE_STRING, PBY_HANDLE_FILE_INFORMATION, bool *ex, bool *in) {
+        *ex = false; *in = true;
+    }
+    PUNICODE_STRING MatchLink(DWORD, LONGLONG, PUNICODE_STRING) { return NULL; }
+    // Minimal BackupWrite substitute: restore ordinary data streams byte-for-byte.
+    // The real RestoreDirectoryTree, stream-header reader, and archive I/O run.
+    bool RestoreFile(PUNICODE_STRING name, PBY_HANDLE_FILE_INFORMATION, PUNICODE_STRING) {
+        std::vector<BYTE> &data = restored[narrow(name)];
+        for (;;) {
+            DWORD n = ReadStreamHeader();
+            if (!n || IsNewFileHeader()) return true;
+            assert(n == HEADER_SIZE && header->dwStreamId == BACKUP_DATA);
+            LONGLONG left = header->Size.QuadPart;
+            while (left) {
+                n = DWORD(std::min(left, LONGLONG(dwBufferSize)));
+                assert(ReadArchive(Buffer, n) == n);
+                data.insert(data.end(), Buffer, Buffer + n); left -= n;
+            }
+        }
+    }
+    // INSERT_PRODUCTION_METHODS
+};
+
+static void append(std::vector<BYTE> &v, const void *p, size_t n) {
+    const BYTE *b = (const BYTE *)p; v.insert(v.end(), b, b + n);
+}
+static std::vector<BYTE> stream(const std::string &s) {
+    WIN32_STREAM_ID h = {}; h.dwStreamId = BACKUP_DATA; h.Size.QuadPart = s.size();
+    std::vector<BYTE> v; append(v, &h, HEADER_SIZE); append(v, s.data(), s.size()); return v;
+}
+static std::vector<BYTE> record(const std::string &name, const std::string &data, bool shortname = false) {
+    WIN32_STREAM_ID h = {}; h.dwStreamAttributes = STRARC_MAGIC;
+    h.Size.QuadPart = sizeof(BY_HANDLE_FILE_INFORMATION) + (shortname ? 26 : 0);
+    h.dwStreamNameSize = DWORD(name.size() * 2);
+    std::vector<BYTE> v; append(v, &h, HEADER_SIZE);
+    for (size_t i = 0; i < name.size(); ++i) { v.push_back(name[i]); v.push_back(0); }
+    v.resize(v.size() + size_t(h.Size.QuadPart), 0);
+    std::vector<BYTE> s = stream(data); append(v, s.data(), s.size()); return v;
+}
+static std::string restored(StrArc &s, const char *name) {
+    std::vector<BYTE> &v = s.restored.at(name); return std::string(v.begin(), v.end());
+}
+static void backup_test(int mode, bool fail, bool verbose) {
+    files.clear(); input = File();
+    files["."].directory = files["dir"].directory = true;
+    files["."].children = {"dir", "later"};
+    files["dir"].children = {"missing", "bad", "after"};
+    files["dir\\missing"].openError = true;
+    files["dir\\bad"].bytes = stream(std::string(1000, 'b'));
+    if (fail) files["dir\\bad"].failAfter = 137; // header and partial payload written
+    files["dir\\after"].bytes = stream("after"); files["later"].bytes = stream("later");
+    File archive; StrArc s(&archive); s.bVerbose = verbose;
+    WCHAR placeholder[] = L"archive", dir[] = L"dir", later[] = L"later";
+    LPWSTR args[] = {placeholder, dir, later};
+    if (mode >= 2) {
+        s.bFilesFromStdIn = true; s.bFilesFromStdInUnicode = mode == 3;
+        input.lines = {"dir\\missing", "dir\\bad", "dir\\after", "later"};
+    }
+    diagnostics.clear();
+    int result = s.Main(mode == 1 ? 3 : 1, args);
+    if (fail) {
+        assert(diagnostics.find("strarc done") == std::string::npos);
+        assert(diagnostics.find("strarc aborted") != std::string::npos);
+    } else if (verbose) assert(diagnostics.find("strarc done") != std::string::npos);
+    assert((result != 0) == fail); assert(s.bBackupFailed == fail);
+    assert(files["dir\\bad"].aborts == 1);
+    assert(files["dir\\bad"].closes == 1);
+    if (fail) {
+        assert(files["dir\\after"].opens == 0 && files["later"].opens == 0);
+        size_t end = archive.bytes.size();
+        assert(!s.BackupFile(later, true)); assert(archive.bytes.size() == end);
+        assert(s.FileCounter == 0);
+        if (mode < 2) assert(files["dir"].closes == 1);
+        if (mode == 0) assert(files["."].closes == 1);
+        // No directory or later-file header was appended after the short stream.
+        assert(end == HEADER_SIZE + 7 * 2 + sizeof(BY_HANDLE_FILE_INFORMATION) + 137);
+    } else {
+        assert(files["dir\\after"].opens >= 1 && files["later"].opens >= 1);
+        StrArc restore(&archive); assert(restore.RestoreDirectoryTree());
+        assert(restored(restore, "dir\\bad") == std::string(1000, 'b'));
+        assert(restored(restore, "dir\\after") == "after");
+        assert(restored(restore, "later") == "later");
+        assert(diagnostics.find("Error in archive") == std::string::npos);
+        assert(diagnostics.find("Invalid data") == std::string::npos);
+    }
+}
+static void recovery_test(size_t offset, bool pipe, size_t maxRead, DWORD size = 65536) {
+    File a; a.pipe = pipe; a.maxRead = maxRead; a.bytes.resize(offset, 0xCC);
+    std::vector<BYTE> r = record("one", std::string(size * 2 + 17, 'A'), true);
+    append(a.bytes, r.data(), r.size());
+    r = record("two", "second file"); append(a.bytes, r.data(), r.size());
+    StrArc s(&a, size); assert(s.RestoreDirectoryTree());
+    assert(restored(s, "one") == std::string(size * 2 + 17, 'A'));
+    assert(restored(s, "two") == "second file");
+    if (maxRead == size_t(-1)) {
+        assert(std::find(a.reads.begin(), a.reads.end(), 1) == a.reads.end());
+        assert(a.reads.size() < offset / (size - HEADER_SIZE) + 20);
+    }
+}
+int main() {
+    static_assert(sizeof(WCHAR) == 2, "Use -fshort-wchar");
+    static_assert(sizeof(BY_HANDLE_FILE_INFORMATION) == 52, "Windows metadata layout");
+    for (int mode = 0; mode != 4; ++mode)
+        for (int fail = 0; fail != 2; ++fail)
+            for (int verbose = 0; verbose != 2; ++verbose)
+                backup_test(mode, fail != 0, verbose != 0);
+    puts("PASS: backup failure/status, stop-before-later-file, all four entry paths, open-error skip, round trip");
+    recovery_test(0, false, size_t(-1));
+    recovery_test(1, true, 7);
+    recovery_test(8 * 1024 * 1024 + 13, false, size_t(-1));
+    // First scan block ends at archive offset size + 1 (the initial byte is discarded).
+    for (DWORD size : {65536U, 131072U}) {
+        for (size_t split = 1; split < HEADER_SIZE; ++split) {
+            recovery_test(size + 1 - split, false, size_t(-1), size);
+            recovery_test(size + 1 + size - 19 - split, true, 113, size);
+        }
+    }
+    puts("PASS: normal/damaged restore, every header split at two buffer sizes, short-reading pipes, buffered I/O");
+    // Invalid candidates must be ignored; final valid header is near EOF.
+    for (int field = 0; field < 7; ++field) {
+        File a; a.bytes.resize(31, 0xCC);
+        WIN32_STREAM_ID h = {}; h.dwStreamAttributes = STRARC_MAGIC;
+        h.Size.QuadPart = 52; h.dwStreamNameSize = 2;
+        switch (field) {
+        case 0: h.dwStreamId = BACKUP_DATA; break;
+        case 1: h.dwStreamAttributes ^= 1; break;
+        case 2: h.Size.QuadPart = 53; break;
+        case 3: h.Size.HighPart = 1; break;
+        case 4: h.dwStreamNameSize = 0; break;
+        case 5: h.dwStreamNameSize = 3; break;
+        case 6: h.dwStreamNameSize = 65536; break;
+        }
+        append(a.bytes, &h, HEADER_SIZE); a.bytes.resize(103, 0xCC);
+        std::vector<BYTE> r = record("valid", "tail"); append(a.bytes, r.data(), r.size());
+        StrArc s(&a); assert(s.RestoreDirectoryTree());
+        assert(s.restored.size() == 1 && restored(s, "valid") == "tail");
+    }
+    // Re-enter recovery with a damaged header already read by the stream reader.
+    File a; a.bytes.resize(7, 0xCC);
+    std::vector<BYTE> r = record("retained", "data"); append(a.bytes, r.data(), r.size());
+    StrArc s(&a); assert(s.ReadArchive(s.Buffer, HEADER_SIZE) == HEADER_SIZE);
+    assert(s.ReadNextFileHeader(true)); assert(((WIN32_STREAM_ID *)s.Buffer)->dwStreamNameSize == 16);
+    File empty; empty.bytes.resize(200, 0xCC); StrArc noHeader(&empty);
+    assert(!noHeader.ReadNextFileHeader());
+    puts("PASS: candidate validation, already-buffered header overlap, damaged EOF");
+
+    File cached; cached.bytes.resize(37, 0xCC);
+    for (int i = 0; i < 100; ++i) {
+        std::vector<BYTE> entry = record(std::to_string(i), std::to_string(i));
+        append(cached.bytes, entry.data(), entry.size());
+    }
+    StrArc many(&cached); assert(many.RestoreDirectoryTree());
+    for (int i = 0; i < 100; ++i)
+        assert(restored(many, std::to_string(i).c_str()) == std::to_string(i));
+    assert(cached.reads.size() < 10);
+    puts("PASS: 100 small files retained in recovery read-ahead without extra per-file I/O");
+
+    File between; between.pipe = true;
+    between.bytes = record("first", "before damage");
+    between.bytes.resize(between.bytes.size() + 37, 0xCD);
+    r = record("next", "after damage"); append(between.bytes, r.data(), r.size());
+    StrArc middle(&between); assert(middle.RestoreDirectoryTree());
+    assert(restored(middle, "first") == "before damage");
+    assert(restored(middle, "next") == "after damage");
+    puts("PASS: recovery between files after the stream parser returns an invalid header");
+}

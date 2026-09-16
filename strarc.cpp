@@ -72,6 +72,7 @@ StrArc::Initialize()
     FullPath.Buffer = wczFullPathBuffer;
     hArchive = INVALID_HANDLE_VALUE;
     bCancel = false;
+    bBackupFailed = false;
     bVerbose = false;
     bLocal = false;
     bTestMode = false;
@@ -565,7 +566,7 @@ StrArc::BackupFilenamesFromStreamW(HANDLE hInputFile)
     {
         YieldSingleProcessor();
 
-        if (bCancel)
+        if (bBackupFailed || bCancel)
             break;
 
         FullPath.Length = (USHORT)
@@ -584,7 +585,9 @@ StrArc::BackupFilenamesFromStreamW(HANDLE hInputFile)
             break;
         }
 
-        BackupFile(&FullPath, NULL, false);
+        if (!BackupFile(&FullPath, NULL, false) &&
+            (bBackupFailed || bCancel))
+            break;
     }
 }
 
@@ -600,7 +603,7 @@ StrArc::BackupFilenamesFromStreamA(HANDLE hInputFile)
     {
         YieldSingleProcessor();
 
-        if (bCancel)
+        if (bBackupFailed || bCancel)
             break;
 
         WHeapMem<char> czFile(32768,
@@ -638,7 +641,9 @@ StrArc::BackupFilenamesFromStreamA(HANDLE hInputFile)
             continue;
         }
 
-        BackupFile(&FullPath, NULL, false);
+        if (!BackupFile(&FullPath, NULL, false) &&
+            (bBackupFailed || bCancel))
+            break;
     }
 }
 

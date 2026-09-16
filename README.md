@@ -74,6 +74,10 @@ EFS encryption state is not preserved: the archive is not encrypted by strarc, a
 
 The `-r` feature snapshots registry hives; it does not provide a VSS snapshot or application-consistent capture of an entire live system. Its temporary `.$sards` files can remain if the run is interrupted or their directories are excluded. See the manual's registry-backup section before using it.
 
+If reading a source file's backup streams fails after its file header has been written, creation stops, reports that the archive must not be trusted, and returns a nonzero status. Later files are not appended behind the incomplete stream. The partial file remains in the archive; rollback/truncation and skipping such files are not implemented. Files that cannot be opened at all retain the existing skip-and-report behavior.
+
+Restore scans damaged regions in buffered sequential blocks, including when reading from a pipe. This speeds up resynchronization but cannot recover later headers already consumed as payload of an earlier incomplete stream. See [reliability tests](tests/README.md) for the fault-injection harness and native Windows smoke test.
+
 `-t` reads the archive and reports structural/read errors, but the format has no cryptographic integrity check. Review stderr and perform a trial restore for important backups; per-file errors can be reported while the command continues, so a zero exit code alone does not prove a complete backup or restore.
 
 ## Building
