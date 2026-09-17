@@ -8,7 +8,7 @@
 // new file begins in the archive.
 #define STRARC_MAGIC 0xBAC00001
 
-// Terminal failed-entry stream, introduced in 0.3.0m. BACKUP_INVALID, no
+// Terminal failed-entry stream, introduced in 0.4.0. BACKUP_INVALID, no
 // name, and a four-byte Win32 error payload. Never pass this to BackupWrite.
 #define STRARC_FAILED_FILE 0xBAC00002
 

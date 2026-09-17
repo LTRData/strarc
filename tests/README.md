@@ -80,7 +80,7 @@ retained directories and hard links. All paths are disposable temporary paths.
 The derivatives are extraction fixtures, not evidence of native `BackupRead`
 source failures; deterministic writer fault injection is in the portable harness.
 
-The native script must be run with a newly built **0.3.0m** executable on NTFS.
+The native script must be run with a newly built **0.4.0** executable on NTFS.
 It has not been run in the Linux development environment. Use Procmon filtered
 to `input.sa` to inspect recovery read sizes. No real disk damage is induced.
 

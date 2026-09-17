@@ -2,7 +2,7 @@
 
 A Windows command-line backup and restore tool that streams files and their metadata through the Windows backup APIs. It uses its own archive format, with file headers followed by backup streams; it does not create tar or ZIP files.
 
-The source identifies the current version as **0.3.0m**. The detailed [strarc manual](strarc.txt) describes **0.3.0g** from March 2015 and remains useful for options, backup strategies and historical limitations. Use `strarc -?` for the current command-line reference.
+The source identifies the current version as **0.4.0**. The [strarc manual](strarc.txt) includes a current compatibility note followed by the historical **0.3.0g** manual from March 2015 and remains useful for options, backup strategies and historical limitations. Use `strarc -?` for the current command-line reference.
 
 ## Capabilities
 
@@ -76,7 +76,7 @@ The `-r` feature snapshots registry hives; it does not provide a VSS snapshot or
 
 If reading a source file's backup streams fails, creation logs the error to stderr, pads any already-advertised stream payload with zeros, writes a failed-entry record, and continues with later files. Incomplete stream headers and names are withheld entirely. This works with archive files, stdout, pipes and compression filters; no seeking or whole-file staging is required. The final summary reports successful and failed entry counts and returns nonzero. Files that cannot be opened at all retain the existing skip-and-report behavior.
 
-**Use strarc 0.3.0m or later to extract or test archives containing failed-entry records.** Older extractors do not understand the record and may leave padded files behind. New extractors still read older archives. Successful entries keep the existing format. See [archive format and failure handling](docs/archive-format.md).
+**Use strarc 0.4.0 or later to extract or test archives containing failed-entry records.** Older extractors do not understand the record and may leave padded files behind. New extractors still read older archives. Successful entries keep the existing format. See [archive format and failure handling](docs/archive-format.md).
 
 Extraction discards a marked regular file that it opened, reports the source error, and continues; test mode and excluded/skipped entries also report the record and return nonzero, without deleting an existing destination. Failed directory metadata does not delete the directory or its recovered children. If removal of a failed extraction is denied, strarc reports that too; the partial file may remain. Extraction with overwrite enabled is not transactional: an existing destination already overwritten cannot be recovered by discarding the failed entry.
 
@@ -96,12 +96,14 @@ The repository has a Visual Studio solution and a separate NMAKE build. The chec
 | x64 | v120 | v90 |
 | ARM | v140 | v140 |
 
+Build outputs (`strarc.lib`, `strarc.exe` and compiled resources) must be rebuilt from the current sources; obsolete checked-in libraries and resources have been removed.
+
 Both build routes require shared LTR Data headers and libraries outside this repository. Headers such as `winstrct.h`, `ntfileio.hpp` and `spsleep.h` are in [LTRData/include](https://github.com/LTRData/include). The project imports `..\winstrct.props` and, for some configurations, absolute paths to the maintainer's WDK 7 and signing property sheets. The local `strarc.props` also contains a fixed WDK library path. Arrange or adapt these dependencies before building.
 
 The root [Makefile](Makefile) uses `cl`, `link`, `lib` and `rc`, writes outputs under the CPU directory, and includes ARM/ARM64 branches as well as x86/x64 handling. It uses `_BUILDARCH` when set, otherwise `CPU` or an `i386` default, and explicitly requires `..\lib\minwcrt.lib`. Its install targets contain maintainer-specific drive paths. These are legacy build configurations, not a self-contained modern SDK build.
 
 ## License and history
 
-[MIT License](LICENSE), by Olof Lagerkvist. The standalone license preserves the notice from [strarc.txt](strarc.txt), which remains unchanged.
+[MIT License](LICENSE), by Olof Lagerkvist. The standalone license preserves the historical notice in [strarc.txt](strarc.txt).
 
 Some code originated in Olof Lagerkvist's commercial `ntarc` tool from 1998–2000 and was subsequently released as part of strarc, as described in the original manual.

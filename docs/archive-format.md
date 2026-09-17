@@ -1,4 +1,4 @@
-# Archive framing and failed entries (0.3.0m)
+# Archive framing and failed entries (0.4.0)
 
 strarc archives are sequential Windows backup streams with custom file-entry
 headers. Multi-byte values are little-endian. `WIN32_STREAM_ID` contributes
@@ -121,7 +121,7 @@ preserving existing destinations matters.
 ## Compatibility and limits
 
 Use an extractor/tester at least as new as the writer; failed-entry records require
-**0.3.0m or later**. The archive has no global version negotiation. Older extractors
+**0.4.0 or later**. The archive has no global version negotiation. Older extractors
 may ignore/reject the record or retain zero-padded data, so their behavior is not
 supported for archives containing these records. New extractors retain support
 for older archives.
