@@ -34,54 +34,145 @@ bool
 StrArc::ReadFileStreamsToArchive(PUNICODE_STRING File,
 HANDLE hFile)
 {
+    bBackupFailed = true;
+    if (BackupPrefix == NULL)
+    {
+        BackupPrefix = (LPBYTE)LocalAlloc(LMEM_FIXED, HEADER_SIZE + USHORT_MAX);
+        if (BackupPrefix == NULL)
+            Exception(XE_NOT_ENOUGH_MEMORY);
+    }
+
     LPVOID lpCtx = NULL;
+    LONGLONG remaining = 0;
+    DWORD error = NO_ERROR;
+    DWORD prefix = 0;
+    DWORD prefixSize = HEADER_SIZE;
+
     for (;;)
     {
         YieldSingleProcessor();
-
         if (bCancel)
         {
-            bBackupFailed = true;
             BackupRead(NULL, NULL, 0, NULL, TRUE, FALSE, &lpCtx);
-
-            if (bVerbose)
-                fputs(", break.\r\n", stderr);
-
+            SetLastError(ERROR_OPERATION_ABORTED);
             return false;
         }
 
-        if (bVerbose)
-            fputs(", stream: ", stderr);
-
-        DWORD dwBytesRead;
-        if (!BackupRead(hFile, Buffer, dwBufferSize, &dwBytesRead, FALSE,
+        // BackupRead requires a buffer larger than WIN32_STREAM_ID. Keep bulk
+        // reads, then parse every stream boundary within the returned bytes.
+        DWORD count = 0;
+        if (!BackupRead(hFile, Buffer, dwBufferSize, &count, FALSE,
             bProcessSecurity, &lpCtx))
         {
-            WErrMsgA errmsg;
-            oem_printf(stderr,
-                "strarc: Cannot read '%1!wZ!': %2%%n",
-                File, errmsg);
-            bBackupFailed = true;
-            BackupRead(NULL, NULL, 0, NULL, TRUE, FALSE, &lpCtx);
-            return false;
+            error = GetLastError();
+            goto failed;
         }
-
-        if (dwBytesRead == 0)
+        if (count == 0)
         {
+            if ((remaining != 0) || (prefix != 0))
+            {
+                error = ERROR_HANDLE_EOF;
+                goto failed;
+            }
+
             BackupRead(NULL, NULL, 0, NULL, TRUE, FALSE, &lpCtx);
+            bBackupFailed = false;
             ++FileCounter;
-
             if (bVerbose)
-                fputs("EOF\r\n", stderr);
-
+                fputs(", EOF\r\n", stderr);
             return true;
         }
 
-        if (bVerbose)
-            fprintf(stderr, "%u bytes", dwBytesRead);
+        DWORD offset = 0;
+        while (offset < count)
+        {
+            DWORD size = count - offset;
+            if (remaining > 0)
+            {
+                if (remaining < size)
+                    size = (DWORD)remaining;
+                WriteArchive(Buffer + offset, size);
+                remaining -= size;
+            }
+            else
+            {
+                if (size > prefixSize - prefix)
+                    size = prefixSize - prefix;
+                CopyMemory(BackupPrefix + prefix, Buffer + offset, size);
+                prefix += size;
 
-        WriteArchive(Buffer, dwBytesRead);
+                LPWIN32_STREAM_ID stream = (LPWIN32_STREAM_ID)BackupPrefix;
+                if ((prefix == HEADER_SIZE) && (prefixSize == HEADER_SIZE))
+                {
+                    // Bound the prefix and extractor arithmetic. Unknown
+                    // nonzero stream IDs remain supported.
+                    if ((stream->dwStreamId == BACKUP_INVALID) ||
+                        (stream->Size.QuadPart < 0) ||
+                        (stream->dwStreamNameSize > USHORT_MAX) ||
+                        (stream->dwStreamNameSize & 1) ||
+                        (stream->dwStreamNameSize > dwBufferSize - HEADER_SIZE) ||
+                        (stream->Size.QuadPart >
+                            MAXLONGLONG - HEADER_SIZE - stream->dwStreamNameSize))
+                    {
+                        error = ERROR_INVALID_DATA;
+                        goto failed;
+                    }
+                    prefixSize += stream->dwStreamNameSize;
+                }
+
+                // Hold an incomplete header/name entirely outside the archive.
+                if (prefix == prefixSize)
+                {
+                    remaining = stream->Size.QuadPart;
+                    WriteArchive(BackupPrefix, prefixSize);
+                    prefix = 0;
+                    prefixSize = HEADER_SIZE;
+                }
+            }
+            offset += size;
+        }
     }
+
+failed:
+    // Do not trust output bytes from a failed BackupRead call. Only bytes
+    // already written to the archive reduce the padding still required.
+    WErrMsgA errmsg(error);
+    oem_printf(stderr, "strarc: Cannot read '%1!wZ!': %2%%n"
+        "strarc: Marking this entry as failed and continuing.%%n", File, errmsg);
+    ++FailedFileCounter;
+    BackupRead(NULL, NULL, 0, NULL, TRUE, FALSE, &lpCtx);
+
+    memset(Buffer, 0, dwBufferSize);
+    while (remaining > 0)
+    {
+        YieldSingleProcessor();
+        if (bCancel)
+        {
+            SetLastError(ERROR_OPERATION_ABORTED);
+            return false;
+        }
+
+        DWORD count = remaining > dwBufferSize ? dwBufferSize : (DWORD)remaining;
+        WriteArchive(Buffer, count);
+        remaining -= count;
+    }
+
+    if (bCancel)
+    {
+        SetLastError(ERROR_OPERATION_ABORTED);
+        return false;
+    }
+
+    header->dwStreamId = BACKUP_INVALID;
+    header->dwStreamAttributes = STRARC_FAILED_FILE;
+    header->Size.QuadPart = sizeof(error);
+    header->dwStreamNameSize = 0;
+    CopyMemory(Buffer + HEADER_SIZE, &error, sizeof(error));
+    WriteArchive(Buffer, HEADER_SIZE + sizeof(error));
+    bBackupFailed = false;
+    // The pipe-based copy helper also uses this method and reads GetLastError.
+    SetLastError(error);
+    return false;
 }
 
 // File is the complete relative path from current directory to the object
@@ -94,8 +185,8 @@ StrArc::BackupFile(PUNICODE_STRING File,
     PUNICODE_STRING ShortName,
     bool bTraverseDirectories)
 {
-    // Once a file header has been written, a failed BackupRead can leave an
-    // incomplete stream. Never append another file to that archive.
+    // A previous cancellation or output failure may have left an unfinished
+    // entry. Source errors with a complete failure record allow continuation.
     if (bBackupFailed || bCancel)
         return false;
 
@@ -373,6 +464,7 @@ StrArc::BackupFile(PUNICODE_STRING File,
         fprintf(stderr, ", header: %u bytes",
         HEADER_SIZE + header->dwStreamNameSize + header->Size.LowPart);
 
+    bBackupFailed = true;
     WriteArchive(Buffer, HEADER_SIZE + header->dwStreamNameSize +
         header->Size.LowPart);
 
@@ -386,7 +478,7 @@ StrArc::BackupFile(PUNICODE_STRING File,
         LinkName =
             MatchLink(file_info.dwVolumeSerialNumber,
             FileIndex.QuadPart,
-            File);
+            File, false);
     }
 
     if (LinkName != NULL)
@@ -406,11 +498,21 @@ StrArc::BackupFile(PUNICODE_STRING File,
 
         WriteArchive((LPBYTE)LinkName->Buffer, LinkName->Length);
 
+        bBackupFailed = false;
         ++FileCounter;
         return true;
     }
 
     bool bResult = ReadFileStreamsToArchive(File, hFile);
+
+    // Publish a hard-link source only after its entire backup succeeded.
+    if (bResult && (file_info.nNumberOfLinks > 1) && bHardLinkSupport)
+    {
+        LARGE_INTEGER FileIndex = { 0 };
+        FileIndex.LowPart = file_info.nFileIndexLow;
+        FileIndex.HighPart = file_info.nFileIndexHigh;
+        MatchLink(file_info.dwVolumeSerialNumber, FileIndex.QuadPart, File);
+    }
 
     if (bResult &&
         (BackupMethod == BACKUP_METHOD_FULL ||

@@ -23,6 +23,9 @@ def method(path, signature):
 methods = []
 for result, signature in [
     ("bool", "IsValidFileHeader("), ("bool", "IsNewFileHeader("),
+    ("bool", "IsFailedFileHeader("), ("bool", "SkipArchive("),
+    ("PUNICODE_STRING", "MatchLink("), ("bool", "HasBackupFailed("),
+    ("LONGLONG", "GetFailedFileCount("),
     ("DWORD", "ReadArchive("), ("DWORD", "ReadStreamHeader("),
     ("bool", "ReadNextFileHeader("), ("void", "WriteArchive("),
     ("void", "BackupFiles("), ("bool", "BackupCurrentDirectory("),
@@ -36,15 +39,23 @@ for path, result, signature in [
     ("strarc.cpp", "void", "StrArc::BackupFilenamesFromStreamW("),
     ("strarc.cpp", "void", "StrArc::BackupFilenamesFromStreamA("),
     ("restore.cpp", "bool", "StrArc::RestoreDirectoryTree("),
+    ("restore.cpp", "void", "StrArc::FillEntireBuffer("),
+    ("restore.cpp", "void", "StrArc::DiscardFileFromArchive("),
+    ("restore.cpp", "bool", "StrArc::WriteFileFromArchive("),
+    ("restore.cpp", "bool", "StrArc::WriteFileDataStreamFromArchive("),
+    ("restore.cpp", "bool", "StrArc::WriteFileAlternateStreamsFromArchive("),
 ]:
     methods.append(result + " " + method(path, signature).replace("StrArc::", ""))
-# Use the unmodified backup dispatch/reporting tail of Main; setup is provided
-# by the fixture. This includes every command-line backup dispatch choice.
+# Use the unmodified backup/restore dispatch and reporting tail of Main.
+# Command-line setup is supplied by the fixture.
 main = method("parsecmd.cpp", "StrArc::Main(")
-main = main[main.index("    if (dwBufferSize < HEADER_SIZE)"):]
+main = main[main.rindex("    if (bRestoreMode || bTestMode)"):]
 methods.append("int Main(int argc, LPWSTR *argv) {\n" + main)
 fixture = (ROOT / "tests/reliability.cpp.in").read_text()
+fixture = fixture.replace("// INSERT_LINK_TRACKER", (ROOT / "linktrack.hpp").read_text())
 source = fixture.replace("// INSERT_PRODUCTION_METHODS", "\n\n".join(methods))
+source = source.replace("// INSERT_PRODUCTION_COPY_METHOD",
+                        "bool " + method("bfcopy.cpp", "StrArc::BackupCopyFile("))
 # Only adapt MSVCRT's integer format spelling for the host C runtime.
 source = source.replace("%I64u", "%llu")
 # MSVC permits sizeof TYPE without parentheses; GCC requires them.

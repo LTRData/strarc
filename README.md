@@ -2,7 +2,7 @@
 
 A Windows command-line backup and restore tool that streams files and their metadata through the Windows backup APIs. It uses its own archive format, with file headers followed by backup streams; it does not create tar or ZIP files.
 
-The source identifies the current version as **0.3.0l**. The detailed [strarc manual](strarc.txt) describes **0.3.0g** from March 2015 and remains useful for options, backup strategies and historical limitations. Use `strarc -?` for the current command-line reference.
+The source identifies the current version as **0.3.0m**. The detailed [strarc manual](strarc.txt) describes **0.3.0g** from March 2015 and remains useful for options, backup strategies and historical limitations. Use `strarc -?` for the current command-line reference.
 
 ## Capabilities
 
@@ -74,7 +74,13 @@ EFS encryption state is not preserved: the archive is not encrypted by strarc, a
 
 The `-r` feature snapshots registry hives; it does not provide a VSS snapshot or application-consistent capture of an entire live system. Its temporary `.$sards` files can remain if the run is interrupted or their directories are excluded. See the manual's registry-backup section before using it.
 
-If reading a source file's backup streams fails after its file header has been written, creation stops, reports that the archive must not be trusted, and returns a nonzero status. Later files are not appended behind the incomplete stream. The partial file remains in the archive; rollback/truncation and skipping such files are not implemented. Files that cannot be opened at all retain the existing skip-and-report behavior.
+If reading a source file's backup streams fails, creation logs the error to stderr, pads any already-advertised stream payload with zeros, writes a failed-entry record, and continues with later files. Incomplete stream headers and names are withheld entirely. This works with archive files, stdout, pipes and compression filters; no seeking or whole-file staging is required. The final summary reports successful and failed entry counts and returns nonzero. Files that cannot be opened at all retain the existing skip-and-report behavior.
+
+**Use strarc 0.3.0m or later to extract or test archives containing failed-entry records.** Older extractors do not understand the record and may leave padded files behind. New extractors still read older archives. Successful entries keep the existing format. See [archive format and failure handling](docs/archive-format.md).
+
+Extraction discards a marked regular file that it opened, reports the source error, and continues; test mode and excluded/skipped entries also report the record and return nonzero, without deleting an existing destination. Failed directory metadata does not delete the directory or its recovered children. If removal of a failed extraction is denied, strarc reports that too; the partial file may remain. Extraction with overwrite enabled is not transactional: an existing destination already overwritten cannot be recovered by discarding the failed entry.
+
+Padding can be large if an error occurs near the beginning of a large stream. Cancellation or archive-output failure still stops creation; an unfinished padding/record sequence can leave an incomplete entry. This change recovers later files, not the unreadable contents of the failed file.
 
 Restore scans damaged regions in buffered sequential blocks, including when reading from a pipe. This speeds up resynchronization but cannot recover later headers already consumed as payload of an earlier incomplete stream. See [reliability tests](tests/README.md) for the fault-injection harness and native Windows smoke test.
 

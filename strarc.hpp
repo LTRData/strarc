@@ -8,6 +8,10 @@
 // new file begins in the archive.
 #define STRARC_MAGIC 0xBAC00001
 
+// Terminal failed-entry stream, introduced in 0.3.0m. BACKUP_INVALID, no
+// name, and a four-byte Win32 error payload. Never pass this to BackupWrite.
+#define STRARC_FAILED_FILE 0xBAC00002
+
 // This is the extension added to the registry database snapshot files created
 // when backing up with the -r switch.
 #define REGISTRY_SNAPSHOT_FILE_EXTENSION L".$sards"
@@ -172,15 +176,20 @@ private:
 
     // This is the buffer used when calling the backup API functions.
     LPBYTE Buffer;
+    // Lazily allocated backup prefix staging; reused across files.
+    LPBYTE BackupPrefix;
     DWORD dwBufferSize;
 
     // Recovery read-ahead is kept at the end of Buffer, beyond active data.
     // ReadArchive consumes it before reading the handle (including pipes).
     DWORD dwArchiveBytesBuffered;
 
-    // A source stream failed after its file header was written. This is fatal
-    // for this archive, unlike an open failure before any header was written.
+    // An entry is incomplete until all streams or its failure record have
+    // been written. A cancellation/output failure leaves this latch set.
     bool bBackupFailed;
+    LONGLONG FailedFileCounter;
+    bool bRestoreEntryFailed;
+    bool bRestoreDirectory;
 
     // Information about currently raised exception, if any.
     StrArcExceptionData ExceptionData;
@@ -277,10 +286,25 @@ private:
         return IsValidFileHeader(header) || (header->dwStreamNameSize & 1);
     }
 
+    bool
+        IsFailedFileHeader()
+    {
+        if ((header->dwStreamId != BACKUP_INVALID) ||
+            (header->dwStreamAttributes != STRARC_FAILED_FILE))
+            return false;
+
+        if ((header->Size.QuadPart != sizeof(DWORD)) ||
+            (header->dwStreamNameSize != 0))
+            Exception(XE_ARCHIVE_BAD_HEADER);
+
+        return true;
+    }
+
     PUNICODE_STRING
         MatchLink(DWORD dwVolumeSerialNumber,
             LONGLONG NodeNumber,
-            PUNICODE_STRING Name)
+            PUNICODE_STRING Name,
+            bool bAdd = true)
     {
         PUNICODE_STRING LinkName = NULL;
 
@@ -294,6 +318,9 @@ private:
             if (linkinfo->Match(dwVolumeSerialNumber, NodeNumber, &LinkName))
                 return LinkName;
         }
+
+        if (!bAdd)
+            return NULL;
 
         LinkTrackerItem *NewLinkInfo =
             LinkTrackerItem::NewItem(LinkTrackerItems[(NodeNumber & 0xFF0) >> 4],
@@ -639,6 +666,10 @@ private:
             bool &bSeekOnly);
 
     void
+        MEMBERCALL
+        DiscardFileFromArchive(PUNICODE_STRING File, HANDLE &hFile);
+
+    void
         __declspec(noreturn) MEMBERCALL
         Exception(XError XE, LPCWSTR Name = NULL);
 
@@ -687,11 +718,15 @@ private:
 
         *cloned = *this;
         cloned->bBackupFailed = false;
+        cloned->FailedFileCounter = 0;
+        cloned->bRestoreEntryFailed = false;
+        cloned->bRestoreDirectory = false;
         memset(cloned->LinkTrackerItems,
             0,
             sizeof(cloned->LinkTrackerItems));
 
         cloned->Buffer = NULL;
+        cloned->BackupPrefix = NULL;
         cloned->RootDirectory = NULL;
         cloned->hArchive = NULL;
 
@@ -935,8 +970,15 @@ public:
     bool
         HasBackupFailed() const
     {
-        // A partial file remains in the archive; this session cannot continue.
-        return bBackupFailed;
+        return bBackupFailed || (FailedFileCounter != 0);
+    }
+
+    LONGLONG
+        GetFailedFileCount() const
+    {
+        // Source-stream failures during backup; failed entries during restore,
+        // including failure records encountered in test or excluded entries.
+        return FailedFileCounter;
     }
 
     bool bCancel;

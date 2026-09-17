@@ -43,6 +43,13 @@ StrArc::FillEntireBuffer(DWORD &dwBytesRead,
             GetStreamAttributesDescription(header->dwStreamAttributes),
             header->Size.HighPart, header->Size.LowPart);
 
+    if ((header->Size.QuadPart < 0) ||
+        (header->dwStreamNameSize > USHORT_MAX) ||
+        (header->dwStreamNameSize > dwBufferSize - HEADER_SIZE) ||
+        (header->Size.QuadPart >
+            MAXLONGLONG - HEADER_SIZE - header->dwStreamNameSize))
+        Exception(XE_ARCHIVE_BAD_HEADER);
+
     BytesToRead->QuadPart =
         HEADER_SIZE + header->dwStreamNameSize + header->Size.QuadPart -
         dwBytesRead;
@@ -293,16 +300,7 @@ StrArc::WriteFileHardLinkFromArchive(HANDLE &hFile,
                 Target);
         }
 
-        if (!NativeDeleteFile(hFile))
-        {
-            WErrMsgA errmsg_nativedelete;
-            oem_printf(stderr,
-                "strarc: Cannot remove temporary file '%1!wZ!': %2%%n",
-                Target, (LPCSTR)errmsg_nativedelete);
-        }
-
-        NtClose(hFile);
-        hFile = INVALID_HANDLE_VALUE;
+        DiscardFileFromArchive(Target, hFile);
     }
     else if (bVerbose)
         fputs(", Ok", stderr);
@@ -310,6 +308,29 @@ StrArc::WriteFileHardLinkFromArchive(HANDLE &hFile,
     NtClose(hSource);
 
     return true;
+}
+
+// Discard only the object opened for this entry, never resolve a new path.
+// Directories may already contain recovered children and must be retained.
+void
+StrArc::DiscardFileFromArchive(PUNICODE_STRING File, HANDLE &hFile)
+{
+    if (!bRestoreEntryFailed)
+        ++FailedFileCounter;
+    bRestoreEntryFailed = true;
+
+    if (hFile == INVALID_HANDLE_VALUE)
+        return;
+
+    if (!bRestoreDirectory && !NativeDeleteFile(hFile))
+    {
+        WErrMsgA errmsg;
+        oem_printf(stderr,
+            "strarc: Cannot remove failed extraction '%1!wZ!': %2%%n",
+            File, errmsg);
+    }
+    NtClose(hFile);
+    hFile = INVALID_HANDLE_VALUE;
 }
 
 bool
@@ -325,125 +346,76 @@ StrArc::WriteFileDataStreamFromArchive(HANDLE &hFile,
         (header->dwStreamId == BACKUP_SPARSE_BLOCK) &&
         (header->dwStreamAttributes == STREAM_SPARSE_ATTRIBUTE))
     {
-        PLARGE_INTEGER StartPosition = (PLARGE_INTEGER)
-            (Buffer + HEADER_SIZE + header->dwStreamNameSize);
+        if ((header->Size.QuadPart < sizeof(LARGE_INTEGER)) ||
+            (dwBytesRead - GetDataOffset() < sizeof(LARGE_INTEGER)))
+            Exception(XE_ARCHIVE_BAD_HEADER);
 
-        if ((SetFilePointer(hFile, StartPosition->LowPart,
-            &StartPosition->HighPart, FILE_BEGIN) ==
-            INVALID_SET_FILE_POINTER) ?
-            (GetLastError() != NO_ERROR) : false)
+        LARGE_INTEGER StartPosition;
+        CopyMemory(&StartPosition, Buffer + GetDataOffset(), sizeof(StartPosition));
+        if ((SetFilePointer(hFile, StartPosition.LowPart,
+            &StartPosition.HighPart, FILE_BEGIN) == INVALID_SET_FILE_POINTER) &&
+            (GetLastError() != NO_ERROR))
         {
             WErrMsgA errmsg;
-            oem_printf(stderr,
-                "strarc: Seek error in '%1!wZ!': %2%%n",
-                &File, errmsg);
+            oem_printf(stderr, "strarc: Seek error in '%1!wZ!': %2%%n", &File, errmsg);
+            DiscardFileFromArchive(&File, hFile);
             bSeekOnly = true;
         }
 
-        if (!SetEndOfFile(hFile))
+        if (!bSeekOnly && !SetEndOfFile(hFile))
         {
             WErrMsgA errmsg;
-            oem_printf(stderr,
-                "strarc: Size error in '%1!wZ!': %2%%n",
-                &File, errmsg);
+            oem_printf(stderr, "strarc: Size error in '%1!wZ!': %2%%n", &File, errmsg);
+            DiscardFileFromArchive(&File, hFile);
             bSeekOnly = true;
         }
     }
 
-    if (!bSeekOnly && !BackupWrite(hFile, Buffer, dwBytesRead,
-        &dwBytesRead, FALSE, bProcessSecurity, &lpCtx))
-    {
-        WErrMsgA errmsg;
-        oem_printf(stderr,
-            "strarc: Cannot write '%1!wZ!': %2%%n",
-            &File, errmsg);
-        
-        bSeekOnly = true;
-
-        if (!NativeDeleteFile(hFile))
-        {
-            WErrMsgA errmsg_nativedelete;
-            oem_printf(stderr,
-                "strarc: Cannot remove temporary file '%1!wZ!': "
-                "%2%%n",
-                &File, (LPCSTR)errmsg_nativedelete);
-        }
-        CloseHandle(hFile);
-        hFile = INVALID_HANDLE_VALUE;
-    }
-
-    while (BytesToRead->QuadPart > 0)
+    for (;;)
     {
         YieldSingleProcessor();
-
         if (bCancel)
         {
-            if (hFile != INVALID_HANDLE_VALUE)
-            {
-                if (!NativeDeleteFile(hFile))
-                {
-                    WErrMsgA errmsg;
-                    oem_printf
-                        (stderr,
-                            "strarc: Cannot remove temporary file '%1!wZ!': "
-                            "%2%%n",
-                            &File, errmsg);
-                }
-                CloseHandle(hFile);
-            }
+            if (lpCtx != NULL)
+                BackupWrite(NULL, NULL, 0, NULL, TRUE, FALSE, &lpCtx);
+            DiscardFileFromArchive(&File, hFile);
             return false;
+        }
+
+        DWORD written = 0;
+        if (!bSeekOnly &&
+            (!BackupWrite(hFile, Buffer, dwBytesRead, &written, FALSE,
+                bProcessSecurity, &lpCtx) || (written != dwBytesRead)))
+        {
+            WErrMsgA errmsg;
+            oem_printf(stderr, "strarc: Cannot write '%1!wZ!': %2%%n", &File, errmsg);
+            if (lpCtx != NULL)
+                BackupWrite(NULL, NULL, 0, NULL, TRUE, FALSE, &lpCtx);
+            DiscardFileFromArchive(&File, hFile);
+            bSeekOnly = true;
+        }
+
+        // Even rejected metadata has a known archive length. Drain it before
+        // reading the next stream or failed-entry record, including on pipes.
+        if (BytesToRead->QuadPart == 0)
+            break;
+        if (bSeekOnly)
+        {
+            if (!SkipArchive(BytesToRead))
+                return false;
+            break;
         }
 
         dwBytesRead = ReadArchive(Buffer,
-            BytesToRead->QuadPart >
-            (LONGLONG)dwBufferSize ?
+            BytesToRead->QuadPart > dwBufferSize ?
             dwBufferSize : BytesToRead->LowPart);
-
-        BytesToRead->QuadPart -= dwBytesRead;
-
         if (dwBytesRead == 0)
-        {
-            if (bVerbose)
-                fprintf(stderr, ", %.4g %s missing (%s:%u).\r\n",
-                    TO_h(BytesToRead->QuadPart),
-                    TO_p(BytesToRead->QuadPart),
-                    __FILE__, __LINE__);
-
             Exception(XE_ARCHIVE_TRUNC);
-        }
-
-        if (!bSeekOnly && !BackupWrite(hFile, Buffer, dwBytesRead, &dwBytesRead, FALSE,
-            bProcessSecurity, &lpCtx))
-        {
-            WErrMsgA errmsg;
-            oem_printf(stderr,
-                "strarc: Restore of '%1!wZ!' incomplete: %2%%n",
-                &File, errmsg);
-
-            if (lpCtx != NULL)
-                BackupWrite(NULL, NULL, 0, NULL, TRUE, FALSE, &lpCtx);
-
-            if (hFile != INVALID_HANDLE_VALUE)
-            {
-                if (!NativeDeleteFile(hFile))
-                {
-                    WErrMsgA errmsg_nativedelete;
-                    oem_printf
-                    (stderr,
-                        "strarc: Cannot remove temporary file '%1!wZ!': "
-                        "%2%%n",
-                        &File, (LPCSTR)errmsg_nativedelete);
-                }
-                CloseHandle(hFile);
-            }
-
-            return false;
-        }
+        BytesToRead->QuadPart -= dwBytesRead;
     }
 
     if (lpCtx != NULL)
         BackupWrite(NULL, NULL, 0, NULL, TRUE, FALSE, &lpCtx);
-
     return true;
 }
 
@@ -477,15 +449,19 @@ StrArc::WriteFileAlternateStreamsFromArchive(DWORD dwBytesRead,
                 ":%1!wZ!%%n",
                 &stream_name);
 
+            if (!bRestoreEntryFailed)
+                ++FailedFileCounter;
+            bRestoreEntryFailed = true;
             bSeekOnly = true;
         }
 
-        HANDLE hStream;
+        HANDLE hStream = INVALID_HANDLE_VALUE;
 
         DWORD desired_access =
             FILE_GENERIC_READ | FILE_GENERIC_WRITE | WRITE_DAC |
             WRITE_OWNER | DELETE | READ_CONTROL | ACCESS_SYSTEM_SECURITY;
 
+        if (!bSeekOnly)
         for (;;)
         {
             hStream =
@@ -531,13 +507,14 @@ StrArc::WriteFileAlternateStreamsFromArchive(DWORD dwBytesRead,
             break;
         }
 
-        if (hStream == INVALID_HANDLE_VALUE)
+        if (!bSeekOnly && (hStream == INVALID_HANDLE_VALUE))
         {
             WErrMsgA errmsg;
             oem_printf(stderr,
                 "Error restoring stream '%1!wZ!': %2%%n",
                 &complete_name, errmsg);
 
+            DiscardFileFromArchive(FileBaseName, hStream);
             bSeekOnly = true;
         }
 
@@ -582,16 +559,10 @@ StrArc::WriteFileAlternateStreamsFromArchive(DWORD dwBytesRead,
                         "Error writing stream data '%1!wZ!': %2%%n",
                         &complete_name, errmsg);
 
-                    if (!NativeDeleteFile(hStream))
-                    {
-                        WErrMsgA errmsg_nativedelete;
-                        oem_printf
-                            (stderr,
-                                "Error removing temporary stream '%1!wZ!': "
-                                "%2%%n",
-                                &complete_name, (LPCSTR)errmsg_nativedelete);
-                    }
-                    SkipArchive(BytesToRead);
+                    DiscardFileFromArchive(FileBaseName, hStream);
+                    bSeekOnly = true;
+                    if (!SkipArchive(BytesToRead))
+                        return false;
                     break;
                 }
 
@@ -617,8 +588,12 @@ StrArc::WriteFileAlternateStreamsFromArchive(DWORD dwBytesRead,
                 BytesToRead->QuadPart -= dwBytesRead;
             }
         }
-        else
-            SkipArchive(BytesToRead);
+        else if (!SkipArchive(BytesToRead))
+        {
+            if (hStream != INVALID_HANDLE_VALUE)
+                NtClose(hStream);
+            return false;
+        }
 
         for (;;)
         {
@@ -645,7 +620,7 @@ StrArc::WriteFileAlternateStreamsFromArchive(DWORD dwBytesRead,
                 Exception(XE_ARCHIVE_TRUNC);
             }
 
-            if (IsNewFileHeader())
+            if (IsFailedFileHeader() || IsNewFileHeader())
             {
                 if (hStream != INVALID_HANDLE_VALUE)
                     NtClose(hStream);
@@ -672,23 +647,20 @@ StrArc::WriteFileAlternateStreamsFromArchive(DWORD dwBytesRead,
 
                 if (!bResult)
                 {
-                    if (!NativeDeleteFile(hStream))
-                    {
-                        WErrMsgA errmsg;
-                        oem_printf
-                            (stderr,
-                                "Error removing temporary stream '%1!wZ!': %2%%n",
-                                &complete_name, errmsg);
-                    }
-                    if (hStream != INVALID_HANDLE_VALUE)
-                        NtClose(hStream);
-
+                    DiscardFileFromArchive(FileBaseName, hStream);
                     return false;
                 }
             }
+            else if (!SkipArchive(BytesToRead))
+            {
+                if (hStream != INVALID_HANDLE_VALUE)
+                    NtClose(hStream);
+                return false;
+            }
         }
 
-        NtClose(hStream);
+        if (hStream != INVALID_HANDLE_VALUE)
+            NtClose(hStream);
     }
 }
 
@@ -707,18 +679,7 @@ StrArc::WriteFileFromArchive(PUNICODE_STRING File,
 
         if (bCancel)
         {
-            if (hFile != INVALID_HANDLE_VALUE)
-            {
-                if (!NativeDeleteFile(hFile))
-                {
-                    WErrMsgA errmsg;
-                    oem_printf
-                        (stderr,
-                            "strarc: Cannot remove temporary file '%1!wZ!': %2%%n",
-                            File, errmsg);
-                }
-                CloseHandle(hFile);
-            }
+            DiscardFileFromArchive(File, hFile);
             return false;
         }
 
@@ -731,6 +692,31 @@ StrArc::WriteFileFromArchive(PUNICODE_STRING File,
                 "strarc: Incomplete stream header: %u bytes missing.\n",
                 HEADER_SIZE - dwBytesRead);
             Exception(XE_ARCHIVE_TRUNC);
+        }
+
+        if (IsFailedFileHeader())
+        {
+            DWORD error;
+            if (ReadArchive(Buffer, sizeof(error)) != sizeof(error))
+                Exception(XE_ARCHIVE_TRUNC);
+            CopyMemory(&error, Buffer, sizeof(error));
+            WErrMsgA errmsg(error);
+            oem_printf(stderr,
+                "strarc: Source entry '%1!wZ!' failed during backup: %2%%n",
+                File, errmsg);
+            if (bRestoreDirectory)
+                oem_printf(stderr, "strarc: Retaining directory '%1!wZ!' "
+                    "and its recovered children; metadata may be incomplete.%%n", File);
+            DiscardFileFromArchive(File, hFile);
+            bSeekOnly = true;
+
+            // The record terminates this entry. Only a new file or EOF follows.
+            dwBytesRead = ReadStreamHeader();
+            if ((dwBytesRead != 0) && (dwBytesRead != HEADER_SIZE))
+                Exception(XE_ARCHIVE_TRUNC);
+            if ((dwBytesRead == HEADER_SIZE) && !IsValidFileHeader(header))
+                Exception(XE_ARCHIVE_BAD_HEADER);
+            return true;
         }
 
         if (IsNewFileHeader())
@@ -800,6 +786,8 @@ StrArc::RestoreFile(PUNICODE_STRING File,
     PUNICODE_STRING ShortName)
 {
     bool bSeekOnly = false;
+    bRestoreEntryFailed = false;
+    bRestoreDirectory = (FileInfo->dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
 
     if (ShortName != NULL && ShortName->Length == 0)
     {
@@ -1244,7 +1232,17 @@ StrArc::RestoreFile(PUNICODE_STRING File,
             }
 
     if (!WriteFileFromArchive(File, hFile, bSeekOnly))
+    {
+        if (hFile != INVALID_HANDLE_VALUE)
+            NtClose(hFile);
         return false;
+    }
+
+    if (bRestoreEntryFailed)
+    {
+        DiscardFileFromArchive(File, hFile);
+        bSeekOnly = true;
+    }
 
     if ((!bSeekOnly) && (hFile != INVALID_HANDLE_VALUE))
     {
@@ -1336,7 +1334,8 @@ StrArc::RestoreFile(PUNICODE_STRING File,
     if (bVerbose)
         fputs("\r\n", stderr);
 
-    if (((hFile != INVALID_HANDLE_VALUE) || bTestMode) && bIncludeThis)
+    if (!bRestoreEntryFailed &&
+        ((hFile != INVALID_HANDLE_VALUE) || bTestMode) && bIncludeThis)
         ++FileCounter;
 
     if (hFile != INVALID_HANDLE_VALUE)

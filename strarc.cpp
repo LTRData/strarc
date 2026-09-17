@@ -73,6 +73,9 @@ StrArc::Initialize()
     hArchive = INVALID_HANDLE_VALUE;
     bCancel = false;
     bBackupFailed = false;
+    FailedFileCounter = 0;
+    bRestoreEntryFailed = false;
+    bRestoreDirectory = false;
     bVerbose = false;
     bLocal = false;
     bTestMode = false;
@@ -103,10 +106,14 @@ StrArc::Initialize()
     dwBufferSize = DEFAULT_STREAM_BUFFER_SIZE;
 
     Buffer = NULL;
+    BackupPrefix = NULL;
 }
 
 StrArc::~StrArc()
 {
+    if (BackupPrefix != NULL)
+        LocalFree(BackupPrefix);
+
     if (szIncludeStrings != NULL)
         free(szIncludeStrings);
 
