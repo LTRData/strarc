@@ -473,6 +473,15 @@ StrArc::Main(int argc, LPWSTR *argv)
     {
         RestoreDirectoryTree();
 
+        if (FailedFileCounter != 0)
+        {
+            fprintf(stderr,
+                "strarc %s with errors, %I64u successful, %I64u failed entries.\n",
+                bCancel ? "cancelled" : "completed",
+                FileCounter, FailedFileCounter);
+            return XE_FILE_IO;
+        }
+
         if (bVerbose)
             if (bCancel)
                 fprintf(stderr,
@@ -487,7 +496,7 @@ StrArc::Main(int argc, LPWSTR *argv)
                     FileCounter != 1 ? "s" : "",
                     bTestMode ? "found in archive" : "restored");
 
-        return 0;
+        return bCancel ? XE_CANCELLED : XE_NOERROR;
     }
 
     if (dwBufferSize < HEADER_SIZE)
@@ -503,6 +512,23 @@ StrArc::Main(int argc, LPWSTR *argv)
     else
         BackupCurrentDirectory();
 
+    if (bBackupFailed)
+    {
+        fprintf(stderr,
+            "strarc aborted, %I64u file%s backed up. "
+            "The archive contains an incomplete file and must not be trusted.\n",
+            FileCounter, FileCounter != 1 ? "s" : "");
+        return XE_FILE_IO;
+    }
+
+    if (FailedFileCounter != 0)
+    {
+        fprintf(stderr,
+            "strarc %s with errors, %I64u successful, %I64u failed entries.\n",
+            bCancel ? "cancelled" : "completed", FileCounter, FailedFileCounter);
+        return XE_FILE_IO;
+    }
+
     if (bVerbose)
         if (bCancel)
             fprintf(stderr,
@@ -517,5 +543,5 @@ StrArc::Main(int argc, LPWSTR *argv)
                 FileCounter != 1 ? "s" : "",
                 bListOnly ? "found" : "backed up");
 
-    return 0;
+    return bCancel ? XE_CANCELLED : XE_NOERROR;
 }

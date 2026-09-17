@@ -361,3 +361,7 @@ todo.txt
 fnd.cmd
 *.bin
 *.sa
+
+# Generated static libraries and resources, including legacy uppercase names.
+*.[Ll][Ii][Bb]
+*.[Rr][Ee][Ss]

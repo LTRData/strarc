@@ -53,7 +53,11 @@ class StrArc::FileCopyContext
         if (!Context->SourceReadSession->
             ReadFileStreamsToArchive(Context->SourceName,
                 Context->SourceHandle))
+        {
             dwResult = GetLastError();
+            if (dwResult == NO_ERROR)
+                dwResult = ERROR_READ_FAULT;
+        }
 
         delete Context->SourceReadSession;
         Context->SourceReadSession = NULL;
@@ -162,16 +166,39 @@ StrArc::BackupCopyFile(HANDLE SourceHandle,
 
     bool bSeekOnly = false;
 
-    if (!Context.StartSourceReadThread())
+    // Stream restore may discard/close a failed entry. It must not close the
+    // caller's handle (the caller still owns its final cleanup).
+    HANDLE hCopyTarget;
+    if (!DuplicateHandle(GetCurrentProcess(), TargetHandle,
+        GetCurrentProcess(), &hCopyTarget, 0, FALSE, DUPLICATE_SAME_ACCESS))
         return false;
+
+    BY_HANDLE_FILE_INFORMATION info;
+    if (!GetFileInformationByHandle(hCopyTarget, &info))
+    {
+        CloseHandle(hCopyTarget);
+        return false;
+    }
+    Context.GetTargetWriteSession()->bRestoreDirectory =
+        (info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+
+    if (!Context.StartSourceReadThread())
+    {
+        CloseHandle(hCopyTarget);
+        return false;
+    }
 
     bool bWriteResult = Context.GetTargetWriteSession()->
         WriteFileFromArchive(TargetName,
-            TargetHandle,
+            hCopyTarget,
             bSeekOnly);
+
+    if (hCopyTarget != INVALID_HANDLE_VALUE)
+        CloseHandle(hCopyTarget);
 
     bool bReadResult =
         Context.GetSourceReadThreadResult();
 
-    return bReadResult & bWriteResult;
+    return bReadResult && bWriteResult &&
+        (Context.GetTargetWriteSession()->FailedFileCounter == 0);
 }

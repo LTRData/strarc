@@ -1,3 +1,17 @@
+Current release: strarc 0.4.0
+
+Version 0.4.0 introduces failed-entry records: source read errors are logged,
+the remaining advertised stream data is padded, and backup continues with later
+files. Use strarc 0.4.0 or later to extract or test these archives. Extraction
+reports and discards failed regular-file entries while preserving later entries.
+Backup and extraction/testing report failures and return a nonzero status.
+See README.md and docs/archive-format.md for current behavior and limitations.
+
+Historical manual follows. Its version numbers, dates and platform descriptions
+refer to the releases discussed, not to the current release.
+
+---
+
 strarc - Stream Archive I/O Utility, a streaming backup/restore tool for
 Windows NT/2000/XP/2003 by Olof Lagerkvist. This documentation is written for
 version 0.3.0g, 26 March 2015, of this tool.

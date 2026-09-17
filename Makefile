@@ -66,7 +66,7 @@ $(CPU)\strarc.exe: ..\lib\minwcrt.lib Makefile                              $(CP
 $(CPU)\strarc.lib: ..\lib\minwcrt.lib Makefile                                                 $(CPU)\strarc.obj $(CPU)\parsecmd.obj $(CPU)\constnam.obj $(CPU)\restore.obj $(CPU)\backup.obj $(CPU)\regsnap.obj $(CPU)\bfcopy.obj $(CPU)\lnk.obj
 	lib /out:$(CPU)\strarc.lib                                                             $(CPU)\strarc.obj $(CPU)\parsecmd.obj $(CPU)\constnam.obj $(CPU)\restore.obj $(CPU)\backup.obj $(CPU)\regsnap.obj $(CPU)\bfcopy.obj $(CPU)\lnk.obj
 
-$(CPU)\strarc.obj: strarc.cpp strarc.hpp
+$(CPU)\strarc.obj: strarc.cpp strarc.hpp version.h
 	cl /c $(WARNING_LEVEL) $(OPTIMIZATION) $(CPP_DEFINE) /Fp$(CPU)\strarc /Fo$(CPU)\strarc strarc.cpp
 
 $(CPU)\exemain.obj: exemain.cpp strarc.hpp

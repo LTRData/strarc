@@ -8,6 +8,10 @@
 // new file begins in the archive.
 #define STRARC_MAGIC 0xBAC00001
 
+// Terminal failed-entry stream, introduced in 0.4.0. BACKUP_INVALID, no
+// name, and a four-byte Win32 error payload. Never pass this to BackupWrite.
+#define STRARC_FAILED_FILE 0xBAC00002
+
 // This is the extension added to the registry database snapshot files created
 // when backing up with the -r switch.
 #define REGISTRY_SNAPSHOT_FILE_EXTENSION L".$sards"
@@ -172,7 +176,20 @@ private:
 
     // This is the buffer used when calling the backup API functions.
     LPBYTE Buffer;
+    // Lazily allocated backup prefix staging; reused across files.
+    LPBYTE BackupPrefix;
     DWORD dwBufferSize;
+
+    // Recovery read-ahead is kept at the end of Buffer, beyond active data.
+    // ReadArchive consumes it before reading the handle (including pipes).
+    DWORD dwArchiveBytesBuffered;
+
+    // An entry is incomplete until all streams or its failure record have
+    // been written. A cancellation/output failure leaves this latch set.
+    bool bBackupFailed;
+    LONGLONG FailedFileCounter;
+    bool bRestoreEntryFailed;
+    bool bRestoreDirectory;
 
     // Information about currently raised exception, if any.
     StrArcExceptionData ExceptionData;
@@ -250,26 +267,44 @@ private:
             bool bTraverseDirectories);
 
     bool
+        IsValidFileHeader(const WIN32_STREAM_ID *candidate)
+    {
+        return (candidate->dwStreamId == BACKUP_INVALID) &&
+            (candidate->dwStreamAttributes == STRARC_MAGIC) &&
+            ((candidate->Size.QuadPart == sizeof BY_HANDLE_FILE_INFORMATION) ||
+            (candidate->Size.QuadPart == sizeof BY_HANDLE_FILE_INFORMATION + 26)) &&
+            (candidate->dwStreamNameSize > 0) &&
+            (candidate->dwStreamNameSize <= 65535) &&
+            ((candidate->dwStreamNameSize & 1) == 0);
+    }
+
+    bool
         IsNewFileHeader()
     {
-        if ((header->dwStreamId == BACKUP_INVALID) &&
-            (header->dwStreamAttributes == STRARC_MAGIC) &&
-            ((header->Size.QuadPart == sizeof BY_HANDLE_FILE_INFORMATION) ||
-            (header->Size.QuadPart == sizeof BY_HANDLE_FILE_INFORMATION + 26))
-            && (header->dwStreamNameSize > 0)
-            && (header->dwStreamNameSize <= 65535))
-            return true;
+        // An odd stream name also hands control back to the outer restore
+        // loop for recovery; it is not accepted as a valid file header.
+        return IsValidFileHeader(header) || (header->dwStreamNameSize & 1);
+    }
 
-        if (header->dwStreamNameSize & 1)
-            return true;
+    bool
+        IsFailedFileHeader()
+    {
+        if ((header->dwStreamId != BACKUP_INVALID) ||
+            (header->dwStreamAttributes != STRARC_FAILED_FILE))
+            return false;
 
-        return false;
+        if ((header->Size.QuadPart != sizeof(DWORD)) ||
+            (header->dwStreamNameSize != 0))
+            Exception(XE_ARCHIVE_BAD_HEADER);
+
+        return true;
     }
 
     PUNICODE_STRING
         MatchLink(DWORD dwVolumeSerialNumber,
             LONGLONG NodeNumber,
-            PUNICODE_STRING Name)
+            PUNICODE_STRING Name,
+            bool bAdd = true)
     {
         PUNICODE_STRING LinkName = NULL;
 
@@ -283,6 +318,9 @@ private:
             if (linkinfo->Match(dwVolumeSerialNumber, NodeNumber, &LinkName))
                 return LinkName;
         }
+
+        if (!bAdd)
+            return NULL;
 
         LinkTrackerItem *NewLinkInfo =
             LinkTrackerItem::NewItem(LinkTrackerItems[(NodeNumber & 0xFF0) >> 4],
@@ -416,12 +454,26 @@ private:
             PUNICODE_STRING TargetName);
 
     // This function reads up to the specified block size from the archive. If
-    // EOF, it returns the number of bytes actually read.
+    // EOF, it returns the number of bytes actually read. Buffer destinations
+    // must follow active data at its beginning; unread recovery bytes occupy
+    // its tail and are consumed before that space is reused.
     DWORD
         ReadArchive(LPBYTE lpBuf, DWORD dwSize)
     {
         DWORD dwBytesRead;
         DWORD dwTotalBytes = 0;
+
+        if (dwArchiveBytesBuffered > 0)
+        {
+            dwBytesRead = dwSize < dwArchiveBytesBuffered ?
+                dwSize : dwArchiveBytesBuffered;
+            MoveMemory(lpBuf, Buffer + dwBufferSize - dwArchiveBytesBuffered,
+                dwBytesRead);
+            dwArchiveBytesBuffered -= dwBytesRead;
+            dwTotalBytes += dwBytesRead;
+            dwSize -= dwBytesRead;
+            lpBuf += dwBytesRead;
+        }
 
         while (dwSize > 0)
         {
@@ -467,22 +519,18 @@ private:
     // This function reads a file header for a new file from the archive. If not
     // a valid header is found the function seeks forward in the archive until it
     // finds a valid header or EOF. If a valid header is found, true is returned,
-    // otherwise false is returned.
+    // otherwise false is returned. bHeaderBuffered includes an invalid header
+    // already read by the stream parser in the search.
     bool
-        ReadNextFileHeader()
+        ReadNextFileHeader(bool bHeaderBuffered = false)
     {
-        DWORD dwBytesRead = ReadArchive(Buffer, HEADER_SIZE);
+        DWORD dwBytesRead = bHeaderBuffered ? HEADER_SIZE :
+            ReadArchive(Buffer, HEADER_SIZE);
 
         if (dwBytesRead < HEADER_SIZE)
             return false;
 
-        if ((header->dwStreamId == BACKUP_INVALID) &&
-            (header->dwStreamAttributes == STRARC_MAGIC) &&
-            ((header->Size.QuadPart == sizeof BY_HANDLE_FILE_INFORMATION) ||
-            (header->Size.QuadPart == sizeof BY_HANDLE_FILE_INFORMATION + 26)) &&
-            (header->dwStreamNameSize > 0) &&
-            (header->dwStreamNameSize <= 65535) &&
-            ((header->dwStreamNameSize & 1) == 0))
+        if (IsValidFileHeader(header))
             return true;
 
         if (bVerbose)
@@ -496,30 +544,43 @@ private:
             fputs("strarc: Error in archive, skipping to next valid header...\r\n",
                 stderr);
 
-        do
+        for (;;)
         {
             YieldSingleProcessor();
 
             if (bCancel)
                 return false;
 
-            MoveMemory(Buffer, Buffer + 1, HEADER_SIZE - 1);
-            if (ReadArchive(Buffer + HEADER_SIZE - 1, 1) != 1)
+            // Keep every possible partial header from the preceding block.
+            MoveMemory(Buffer, Buffer + dwBytesRead - (HEADER_SIZE - 1),
+                HEADER_SIZE - 1);
+            dwBytesRead = HEADER_SIZE - 1 +
+                ReadArchive(Buffer + HEADER_SIZE - 1,
+                    dwBufferSize - (HEADER_SIZE - 1));
+
+            for (DWORD offset = 0; offset + HEADER_SIZE <= dwBytesRead; ++offset)
+            {
+                // Candidates can be unaligned (also on ARM). Copy the fixed
+                // header before inspecting its fields.
+                WIN32_STREAM_ID candidate;
+                CopyMemory(&candidate, Buffer + offset, HEADER_SIZE);
+                if (!IsValidFileHeader(&candidate))
+                    continue;
+
+                MoveMemory(Buffer, Buffer + offset, HEADER_SIZE);
+                dwArchiveBytesBuffered = dwBytesRead - offset - HEADER_SIZE;
+                MoveMemory(Buffer + dwBufferSize - dwArchiveBytesBuffered,
+                    Buffer + offset + HEADER_SIZE, dwArchiveBytesBuffered);
+                return true;
+            }
+
+            if (dwBytesRead < dwBufferSize)
             {
                 fputs("strarc: Invalid data, unexpected end of archive.\r\n",
                     stderr);
                 return false;
             }
-        } while ((header->dwStreamId != BACKUP_INVALID) ||
-            (header->dwStreamAttributes != STRARC_MAGIC) ||
-            ((header->Size.QuadPart != sizeof BY_HANDLE_FILE_INFORMATION) &&
-            (header->Size.QuadPart !=
-                sizeof BY_HANDLE_FILE_INFORMATION + 26)) ||
-                (header->dwStreamNameSize == 0) ||
-            (header->dwStreamNameSize > 65535) ||
-            (header->dwStreamNameSize & 1));
-
-        return true;
+        }
     }
 
     // This function writes a specified block to the archive. If it is not
@@ -588,6 +649,7 @@ private:
         InitializeBuffer(DWORD dwSize)
     {
         dwBufferSize = dwSize;
+        dwArchiveBytesBuffered = 0;
         Buffer = (LPBYTE)LocalAlloc(LPTR, dwBufferSize);
         return Buffer != NULL;
     }
@@ -602,6 +664,10 @@ private:
         WriteFileFromArchive(PUNICODE_STRING File,
             HANDLE &hFile,
             bool &bSeekOnly);
+
+    void
+        MEMBERCALL
+        DiscardFileFromArchive(PUNICODE_STRING File, HANDLE &hFile);
 
     void
         __declspec(noreturn) MEMBERCALL
@@ -651,11 +717,16 @@ private:
             return NULL;
 
         *cloned = *this;
+        cloned->bBackupFailed = false;
+        cloned->FailedFileCounter = 0;
+        cloned->bRestoreEntryFailed = false;
+        cloned->bRestoreDirectory = false;
         memset(cloned->LinkTrackerItems,
             0,
             sizeof(cloned->LinkTrackerItems));
 
         cloned->Buffer = NULL;
+        cloned->BackupPrefix = NULL;
         cloned->RootDirectory = NULL;
         cloned->hArchive = NULL;
 
@@ -817,10 +888,12 @@ public:
         {
             YieldSingleProcessor();
 
-            if (bCancel)
+            if (bBackupFailed || bCancel)
                 break;
 
-            BackupFile((argv++)[1], true);
+            if (!BackupFile((argv++)[1], true) &&
+                (bBackupFailed || bCancel))
+                break;
         }
     }
 
@@ -892,6 +965,20 @@ public:
         GetFileCount()
     {
         return FileCounter;
+    }
+
+    bool
+        HasBackupFailed() const
+    {
+        return bBackupFailed || (FailedFileCounter != 0);
+    }
+
+    LONGLONG
+        GetFailedFileCount() const
+    {
+        // Source-stream failures during backup; failed entries during restore,
+        // including failure records encountered in test or excluded entries.
+        return FailedFileCounter;
     }
 
     bool bCancel;
