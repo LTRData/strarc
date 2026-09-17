@@ -187,7 +187,6 @@ private:
     // An entry is incomplete until all streams or its failure record have
     // been written. A cancellation/output failure leaves this latch set.
     bool bBackupFailed;
-    LONGLONG FailedFileCounter;
     bool bRestoreEntryFailed;
     bool bRestoreDirectory;
 
@@ -673,7 +672,10 @@ private:
         __declspec(noreturn) MEMBERCALL
         Exception(XError XE, LPCWSTR Name = NULL);
 
+    // Keep the 64-bit counters together: a counter after a bool under
+    // pack(4) triggers C4121 with legacy Visual C++ /W4 /WX builds.
     LONGLONG FileCounter;
+    LONGLONG FailedFileCounter;
     DWORD dwExtractCreation;
     DWORD dwCreateOption;
 
